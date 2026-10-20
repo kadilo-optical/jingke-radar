@@ -292,6 +292,9 @@ const S = {
   loading: false,
   editing: null,   // lead object being edited
   current: null,   // lead object open in detail
+  searchAddr: '',  // 地址检索助手的输入
+  searchResult: null, // AI 生成的检索方案
+  searchBusy: false,
 };
 
 const GRADES = ['A','B','C'];
@@ -305,6 +308,57 @@ const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>
 function toast(msg,ms=1900){
   const t=$('#toast'); t.textContent=msg; t.classList.add('on');
   clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('on'),ms);
+}
+
+/* 复制到剪贴板。手机浏览器（尤其非 https / 老版 WebView）常常没有 navigator.clipboard，
+   所以准备了两级降级，避免"点了没反应"。 */
+async function copyText(text, okMsg){
+  const v = String(text ?? '');
+  if(!v.trim()){ toast('没有可复制的内容'); return false; }
+  // 1) 标准 API
+  try{
+    if(navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(v);
+      toast(okMsg || '已复制');
+      return true;
+    }
+  }catch(_){ /* 落到下面 */ }
+  // 2) 老的 execCommand 方案
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=v;
+    ta.setAttribute('readonly','');
+    ta.style.cssText='position:fixed;left:-9999px;top:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, v.length);
+    const ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+    if(ok){ toast(okMsg || '已复制'); return true; }
+  }catch(_){ /* 落到下面 */ }
+  // 3) 兜底：弹出来让用户长按
+  toast('自动复制失败，请长按选中后复制', 2600);
+  const pre=document.createElement('pre');
+  pre.textContent=v;
+  pre.style.cssText='position:fixed;left:12px;right:12px;top:20%;z-index:10000;background:#fff;padding:16px;border-radius:12px;border:1px solid #E8E1D9;max-height:50vh;overflow:auto;font-size:13px;line-height:1.6;user-select:text;-webkit-user-select:text';
+  const mask=document.createElement('div');
+  mask.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999';
+  mask.onclick=()=>{ pre.remove(); mask.remove(); };
+  document.body.appendChild(mask); document.body.appendChild(pre);
+  return false;
+}
+
+/* 生成"公司信息"纯文本：名字 + 联系人 + 电话，方便直接粘到微信/表格 */
+function leadInfoText(l){
+  const lines=[];
+  lines.push(`公司：${l.company || l.shop_name || '未命名'}`);
+  if(l.shop_name && l.shop_name!==l.company) lines.push(`店铺：${l.shop_name}`);
+  lines.push(`联系人：${l.boss_name || '暂无'}`);
+  lines.push(`联系电话：${l.phone || '暂无'}`);
+  if(l.phone_alt) lines.push(`备用电话：${l.phone_alt}`);
+  if(l.area) lines.push(`地址：${l.area}`);
+  if(l.platforms) lines.push(`主营平台：${l.platforms}`);
+  return lines.join('\n');
 }
 function fmtDate(d){
   if(!d) return '';
@@ -379,7 +433,7 @@ async function addFollowup(leadId, content, channel, nextAt){
   const { error } = await cloud.database.from('followups').insert({
     lead_id: leadId, content, channel: channel||'电话',
     next_at: nextAt||null,
-    owner_name: S.session?.user?.name || null,
+    owner_name: displayName()==='未命名用户' ? null : displayName(),
   });
   if(error) throw error;
   if(nextAt){
@@ -549,13 +603,145 @@ ${title ? '对方称呼：' + title : (isHR ? '注意：现有联系人只是招
 }
 
 /* ============================================================
+   地址检索助手
+   ------------------------------------------------------------
+   注意：App 无法联网查工商数据，AI 也编不出真实公司名和电话。
+   所以这里不做"假装搜出公司"，只做真正有用的那件事：
+   按地址生成一套可直接复制到真实平台检索的关键词组合 + 平台 + 识别要点。
+   ============================================================ */
+
+const SYS_ADDR = `你是义乌眼镜产业带的实地检索顾问，服务对象是财税公司的销售，他要按地址片区找到"非近视眼镜贸易商"。
+
+你的任务：根据用户给的地址，输出一份可以直接照着搜的检索方案。
+
+铁律（违反即作废）：
+- 绝对不允许编造公司名称、店铺名、人名、电话、门牌号。一个都不许编。
+- 不允许输出"某某公司""XX眼镜"这类占位式假名字。
+- 只输出"怎么搜"的方法与关键词，不输出"搜到了什么"。
+- 关键词要贴合义乌本地实际：区块名、楼宇名、市场区号（如国际商贸城二区）、街道名。
+- 平台只从这些里选：1688、企查查、BOSS直聘、智联招聘、阿里巴巴国际站、义乌购、抖音、小红书。
+- 不臆断某栋楼一定有什么公司。
+
+输出必须是JSON对象，不要任何解释文字，格式：
+{"area":"规范化后的区域名","summary":"一句话说明这片区的眼镜贸易商分布特点（40字内）",
+"keywords":["可直接粘贴到搜索框的关键词", "...最多8条"],
+"platforms":[{"name":"平台名","why":"为什么在这搜（20字内）","tip":"搜索技巧/筛选条件（30字内）"}],
+"signals":["现场或信息里能证明「是眼镜贸易商且体量不小」的具体信号，3-5条"],
+"warnings":["该片区容易踩的坑，如大量工厂/档口其实是前店后厂，2-3条"]}`;
+
+async function aiAddrSearch(addr){
+  const user = `目标地址区域：${addr}
+
+请按以下思路给方案：
+1) 先把地址规范成义乌的实际片区/楼宇/街道叫法；
+2) 给出能直接粘进搜索框的关键词（组合"地名+眼镜/太阳镜/老花镜/墨镜+贸易/批发/档口"等）；
+3) 说明每个平台该怎么搜、怎么筛（比如1688要看"贸易商"标识而非"工厂店"，BOSS直聘找仓库/运营岗能定位到具体楼栋）；
+4) 给出体量判断信号和片区踩坑提醒。`;
+  const txt = await llm(SYS_ADDR, user);
+  const m = txt.match(/\{[\s\S]*\}/);
+  if(!m) throw new Error('AI返回格式异常：'+txt.slice(0,80));
+  const raw = m[0];
+  let r = {};
+  try{ r = JSON.parse(raw); }catch(_){}
+
+  // 逐字段从原文精确提取，避免同前缀字段互相吞掉
+  const pickStr = (k) => {
+    const mm = raw.match(new RegExp('"'+k+'"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"'));
+    return mm ? mm[1].replace(/\\"/g,'"').replace(/\\n/g,' ').trim() : '';
+  };
+  const pickArr = (k) => {
+    const mm = raw.match(new RegExp('"'+k+'"\\s*:\\s*\\[([\\s\\S]*?)\\]'));
+    if(!mm) return Array.isArray(r[k]) ? r[k] : [];
+    const items = mm[1].match(/"(?:[^"\\]|\\.)*"/g) || [];
+    return items.map(s=>s.slice(1,-1).replace(/\\"/g,'"').trim()).filter(Boolean);
+  };
+
+  const platforms = Array.isArray(r.platforms) ? r.platforms.filter(p=>p&&p.name).map(p=>({
+    name: String(p.name),
+    why: String(p.why||''),
+    tip: String(p.tip||''),
+  })) : [];
+
+  return {
+    area: pickStr('area') || addr,
+    summary: pickStr('summary'),
+    keywords: pickArr('keywords').slice(0,8),
+    platforms: platforms.slice(0,7),
+    signals: pickArr('signals').slice(0,5),
+    warnings: pickArr('warnings').slice(0,3),
+  };
+}
+
+/* 地址检索助手页面 */
+function addrSearchView(){
+  const r = S.searchResult;
+  return `
+  <div class="sheet-h">
+    <h2>按地址找公司</h2>
+    <button class="close" data-close>✕</button>
+  </div>
+  <div class="sheet-b">
+    <label class="fld"><span>要搜的地址 / 片区</span>
+      <input id="f_addr" value="${esc(S.searchAddr)}" placeholder="例如：北苑街道通泰路9号 或 联东U谷 或 国际商贸城二区" autocomplete="off">
+    </label>
+    <p style="font-size:12px;color:var(--ink3);margin:2px 0 12px;line-height:1.6">
+      输入后生成一套「可直接复制去搜」的关键词和平台清单。<br>
+      <span style="color:var(--brand-dk)">App 不会也不能替你查工商底档</span>，真实公司名和电话要在平台上核实。
+    </p>
+    <button class="btn" id="btnDoAddr">${S.searchBusy?'生成中…':'生成检索方案'}</button>
+
+    ${r ? `
+      <div style="margin-top:18px">
+        <div class="script-box" style="margin-bottom:12px">
+          <h3>\ud83d\udccd ${esc(r.area)}</h3>
+          ${r.summary?`<p style="font-size:13px;color:var(--ink2);margin:6px 0 0;line-height:1.65">${esc(r.summary)}</p>`:''}
+        </div>
+
+        ${r.keywords.length?`
+        <div class="script-box" style="margin-bottom:12px">
+          <h3>搜索关键词 <span style="font-weight:400;font-size:11.5px;color:var(--ink3)">点一下即复制</span></h3>
+          ${r.keywords.map(k=>`<div class="copybtn" data-cpkw="${esc(k)}" style="text-align:left;margin-top:8px">${esc(k)}</div>`).join('')}
+          <div class="copybtn" data-cpallkw style="margin-top:10px;background:var(--brand);color:#fff;border-color:var(--brand)">复制全部关键词</div>
+        </div>`:''}
+
+        ${r.platforms.length?`
+        <div class="script-box" style="margin-bottom:12px">
+          <h3>去哪儿搜</h3>
+          ${r.platforms.map(p=>`
+            <div style="padding:10px 0;border-top:1px solid var(--line)">
+              <div style="font-size:13.5px;font-weight:600">${esc(p.name)}</div>
+              ${p.why?`<div style="font-size:12.5px;color:var(--ink2);margin-top:3px;line-height:1.6">${esc(p.why)}</div>`:''}
+              ${p.tip?`<div style="font-size:12px;color:var(--brand-dk);margin-top:3px;line-height:1.6">💡 ${esc(p.tip)}</div>`:''}
+            </div>`).join('')}
+        </div>`:''}
+
+        ${r.signals.length?`
+        <div class="script-box" style="margin-bottom:12px">
+          <h3>怎么判断「是贸易商 + 体量不小」</h3>
+          <div class="checks">${r.signals.map(s=>`<div class="ck"><span class="dot p">✓</span><span class="t">${esc(s)}</span></div>`).join('')}</div>
+        </div>`:''}
+
+        ${r.warnings.length?`
+        <div class="script-box" style="margin-bottom:12px;background:#FFF8EC;border-color:#F0DCB4">
+          <h3 style="color:#8A6A15">⚠ 这片区的坑</h3>
+          <div class="checks">${r.warnings.map(s=>`<div class="ck"><span class="dot" style="background:#B8860B">!</span><span class="t">${esc(s)}</span></div>`).join('')}</div>
+        </div>`:''}
+
+        <button class="btn ghost" id="btnAddrToForm" style="margin-top:4px">用这个地址新建线索 →</button>
+      </div>
+    `:''}
+    <div style="height:16px"></div>
+  </div>`;
+}
+
+/* ============================================================
    RENDER
    ============================================================ */
 
 function renderTopSub(){
   const n = S.leads.length;
   const a = S.leads.filter(l=>l.grade==='A').length;
-  $('#topSub').textContent = S.session?.user?.name
+  $('#topSub').textContent = displayName()
     ? `${S.session.user.name} · 共${n}条线索`
     : (n?`共 ${n} 条线索 · A级 ${a} 条`:'眼镜贸易商精准拓客');
 }
@@ -638,6 +824,15 @@ function leadsView(){
       ${S.q?'<span id="clr" style="opacity:.5;font-size:16px;padding:0 2px">✕</span>':''}
     </div>
   </div>
+  <button id="btnAddrSearch" style="display:flex;align-items:center;gap:10px;width:calc(100% - 32px);margin:0 16px 10px;
+    padding:12px 14px;background:var(--brand-lt);border:1px dashed #E2C4B4;border-radius:12px;text-align:left">
+    <span style="font-size:18px">🗺</span>
+    <span style="flex:1">
+      <span style="display:block;font-size:14px;font-weight:600;color:var(--brand-dk)">按地址找公司</span>
+      <span style="display:block;font-size:12px;color:var(--ink2);margin-top:1px">输入片区，生成可照着搜的关键词组合</span>
+    </span>
+    <span style="color:var(--brand);font-size:16px">›</span>
+  </button>
   <div class="tabs">
     ${chips.map(([k,l])=>`<button class="chip ${S.filter===k?'on':''}" data-f="${k}">${l}</button>`).join('')}
   </div>
@@ -684,6 +879,8 @@ function cardView(l){
         ? `<span class="num">${esc(l.phone)}</span><button class="mini" data-call="${esc(l.phone)}">拨打</button>`
         : `<span class="none">电话待补</span>`}
       <div class="act">
+        <button class="mini ghost" data-cpname="${l.id}" title="复制公司名">复制名</button>
+        <button class="mini ghost" data-cpinfo="${l.id}" title="复制公司完整信息">复制信息</button>
         <button class="mini ghost" data-edit="${l.id}">编辑</button>
       </div>
     </div>
@@ -692,20 +889,41 @@ function cardView(l){
 }
 
 function todoView(){
-  const arr = S.leads.filter(l=>l.next_follow_at)
+  const isCust = l => l.is_customer === true;
+  const arr = S.leads.filter(l=>l.next_follow_at && !isCust(l))
     .sort((a,b)=>String(a.next_follow_at).localeCompare(String(b.next_follow_at)));
   const over = arr.filter(l=>daysFrom(l.next_follow_at)<0);
   const today = arr.filter(l=>daysFrom(l.next_follow_at)===0);
   const soon = arr.filter(l=>{const d=daysFrom(l.next_follow_at);return d>0&&d<=7;});
+  const myCustomers = S.leads.filter(isCust)
+    .sort((a,b)=>String(b.customer_at||'').localeCompare(String(a.customer_at||'')));
+
   const grp=(t,list)=>{
     if(!list.length) return '';
     return `<div style="padding:12px 16px 4px;font-size:12.5px;color:var(--ink2);font-weight:600">${t} · ${list.length}</div>
       <div class="list" style="padding-top:0">${list.map(cardView).join('')}</div>`;
   };
-  if(!arr.length){
-    return `<div class="empty"><div class="big">◷</div><p><b>没有待跟进的线索</b></p><p>在线索详情里设「下次跟进时间」，这里就会提醒你</p></div>`;
-  }
-  return grp('⚠ 已逾期',over)+grp('今天',today)+grp('未来7天',soon);
+
+  // 「我的客户」区块始终显示，让人知道这块在哪
+  const custBlock = `
+    <div style="padding:14px 16px 6px;display:flex;align-items:center;gap:8px">
+      <span style="font-size:13.5px;color:var(--ink);font-weight:600">我的客户</span>
+      <span style="font-size:12px;color:var(--ink3);background:var(--brand-lt);color:var(--brand-dk);padding:1px 8px;border-radius:20px">${myCustomers.length}</span>
+    </div>
+    ${myCustomers.length
+      ? `<div class="list" style="padding-top:0">${myCustomers.map(cardView).join('')}</div>`
+      : `<div style="margin:0 16px 8px;padding:14px 16px;background:var(--brand-lt);border-radius:12px;font-size:12.5px;color:var(--brand-dk);line-height:1.6">
+           还没有我的客户。打开任意线索详情，点「转入我的客户」，就会出现在这里。
+         </div>`}
+  `;
+
+  const todoBlock = arr.length
+    ? grp('⚠ 已逾期',over)+grp('今天',today)+grp('未来7天',soon)
+    : `<div style="margin:12px 16px 4px;padding:14px 16px;background:#fff;border-radius:12px;font-size:12.5px;color:var(--ink2);line-height:1.6;border:1px solid var(--line)">
+         暂无待跟进提醒。在线索详情里设「下次跟进时间」，这里就会提醒你。
+       </div>`;
+
+  return `<div style="padding-bottom:8px">${todoBlock}${custBlock}</div>`;
 }
 
 function statsView(){
@@ -751,19 +969,32 @@ function statsView(){
   </div>`;
 }
 
+function displayName(){
+  // 用户自定义名称优先（存在本机），其次用云端账号名
+  try{
+    const local = localStorage.getItem('radar_display_name');
+    if(local && local.trim()) return local.trim();
+  }catch(_){}
+  return S.session?.user?.name || '未命名用户';
+}
+
 function meView(){
-  const name=S.session?.user?.name||'未命名用户';
+  const name=displayName();
+  const phone=S.session?.user?.phone||S.session?.user?.email||'';
+  const myCount=S.leads.filter(x=>x.is_customer===true).length;
   return `<div style="padding:16px">
     <div class="script-box" style="text-align:center;padding:24px 16px">
       <div style="width:62px;height:62px;border-radius:50%;background:var(--brand-lt);color:var(--brand-dk);
         display:grid;place-items:center;font-size:26px;margin:0 auto 12px">◎</div>
       <div style="font-size:17px;font-weight:600">${esc(name)}</div>
-      <div style="font-size:12.5px;color:var(--ink3);margin-top:4px">立丰财税 · 眼镜贸易商拓客</div>
+      <div style="font-size:12.5px;color:var(--ink3);margin-top:4px">${esc(phone||'立丰财税 · 眼镜贸易商拓客')}</div>
+      <button class="btn ghost" id="btnEditName" style="margin-top:14px;padding:8px 18px;font-size:13px">修改用户名</button>
     </div>
     <div class="dl">
       <div class="it"><span class="k">线索总数</span><span class="v">${S.leads.length} 条</span></div>
-      <div class="it"><span class="k">本轮批次</span><span class="v">批次001 · 联动U谷</span></div>
+      <div class="it"><span class="k">我的客户</span><span class="v">${myCount} 家</span></div>
       <div class="it"><span class="k">数据位置</span><span class="v">云端 · 团队共享</span></div>
+      <div class="it"><span class="k">版本</span><span class="v">v${esc(APP_VERSION)}</span></div>
     </div>
     <div class="script-box">
       <h3>筛选口径（写死在 App 里）</h3>
@@ -775,6 +1006,23 @@ function meView(){
     </div>
     <button class="btn ghost" id="btnLogout" style="margin-top:8px">退出登录</button>
     <p style="text-align:center;font-size:11.5px;color:var(--ink3);margin-top:16px">电话均为公域公开号码，未编造<br>仅用于合法商务联络</p>
+  </div>`;
+}
+
+/* ---------- 修改用户名弹窗 ---------- */
+function nameForm(){
+  const cur = displayName()==='未命名用户' ? '' : displayName();
+  return `
+  <div class="sheet-h">
+    <h2>修改用户名</h2>
+    <button class="close" data-close>✕</button>
+  </div>
+  <div class="sheet-b">
+    <label class="fld"><span>显示名称</span>
+      <input id="f_name" value="${esc(cur)}" placeholder="例如：龚诚" maxlength="20" autocomplete="off">
+    </label>
+    <p style="font-size:12px;color:var(--ink3);margin:4px 0 14px">这个名字只影响本机显示，不影响云端登录账号。</p>
+    <button class="btn" id="btnSaveName">保存</button>
   </div>`;
 }
 
@@ -795,7 +1043,9 @@ function closeSheet(){
   setTimeout(()=>{ if(!sh.classList.contains('on')) sh.innerHTML=''; },260);
 }
 
-function leadForm(l={}){
+function leadForm(l={}, prefillArea=''){
+  l = l || {};
+  const areaVal = l.area || prefillArea || '';
   const p = (l.platforms||'').split('/').map(s=>s.trim()).filter(Boolean);
   return `
   <div class="sheet-h">
@@ -827,7 +1077,7 @@ function leadForm(l={}){
       <textarea id="f_demand" placeholder="例：10月新招Temu运营2人，扩编中">${esc(l.demand_signal||'')}</textarea>
       <div class="hint">这条最能决定开场话术，尽量写具体的、带时间的动作</div></div>
     <div class="f"><label>地址区域</label>
-      <input id="f_area" value="${esc(l.area||'')}" placeholder="精确到街道 / 楼宇 / 园区，如：联东U谷南区3A栋2楼"></div>
+      <input id="f_area" value="${esc(areaVal)}" placeholder="精确到街道 / 楼宇 / 园区，如：联东U谷南区3A栋2楼"></div>
     <div class="row2">
       <div class="f"><label>跟进状态</label>
         <select id="f_status">${STATUSES.map(s=>`<option ${l.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
@@ -956,8 +1206,15 @@ function detailSheet(l){
 
     <div class="btn-row" style="margin-top:4px">
       <button class="btn" data-edit="${l.id}">编辑信息</button>
-      <button class="btn ghost" id="btnAi2" style="flex:0 0 40%">AI 打分</button>
+      <button class="btn ghost" id="btnAi2" style="flex:0 0 34%">AI 打分</button>
     </div>
+    <div class="btn-row" style="margin-top:10px">
+      <button class="btn ghost" id="btnCpName" data-cpname="${l.id}" style="font-size:13.5px">复制公司名</button>
+      <button class="btn ghost" id="btnCpInfo" data-cpinfo="${l.id}" style="font-size:13.5px">复制公司信息</button>
+    </div>
+    ${l.is_customer
+      ? `<button class="btn ghost" id="btnUncustomer" style="margin-top:10px;font-size:13.5px;color:var(--ink2)">移出我的客户（回到线索库）</button>`
+      : `<button class="btn" id="btnCustomer" style="margin-top:10px;background:var(--ok)">转入我的客户 →</button>`}
     <div style="height:20px"></div>
   </div>`;
 }
@@ -1062,13 +1319,28 @@ document.addEventListener('click', async (e)=>{
   const cp=t.closest('[data-copy]');
   if(cp){
     const v=cp.dataset.copy;
-    try{ await navigator.clipboard.writeText(v); toast('已复制 '+v); }
-    catch(_){ toast('复制失败，请长按手动复制'); }
+    await copyText(v);
     return;
   }
   if(t.closest('[data-copyall]')){
     const pre=$('#scriptOut pre');
-    if(pre){ try{ await navigator.clipboard.writeText(pre.textContent); toast('话术已复制'); }catch(_){ toast('复制失败'); } }
+    if(pre) await copyText(pre.textContent, '话术已复制');
+    return;
+  }
+
+  // 复制公司名
+  const cn=t.closest('[data-cpname]');
+  if(cn){
+    const l=S.leads.find(x=>String(x.id)===cn.dataset.cpname);
+    if(l) await copyText(l.company||l.shop_name||'', '公司名已复制');
+    return;
+  }
+
+  // 复制公司完整信息
+  const ci=t.closest('[data-cpinfo]');
+  if(ci){
+    const l=S.leads.find(x=>String(x.id)===ci.dataset.cpinfo);
+    if(l) await copyText(leadInfoText(l), '公司信息已复制');
     return;
   }
 
@@ -1176,7 +1448,7 @@ document.addEventListener('click', async (e)=>{
   // script generation
   const sb=t.closest('[data-script]');
   if(sb){
-    const lead=S.current;
+    const lead=curLead();
     if(!lead) return;
     const kind=sb.dataset.script;
     const out=$('#scriptOut');
@@ -1201,7 +1473,7 @@ document.addEventListener('click', async (e)=>{
 
   // add followup
   if(t.closest('#btnAddFu')){
-    const lead=S.current; if(!lead) return;
+    const lead=curLead(); if(!lead) return;
     const txt=($('#fuText')?.value||'').trim();
     if(!txt){ toast('写点内容再保存'); return; }
     const ch=$('#fuChannel')?.value;
@@ -1222,6 +1494,120 @@ document.addEventListener('click', async (e)=>{
     }
     return;
   }
+
+  // 转入我的客户
+  if(t.closest('#btnCustomer')){
+    const lead=curLead(); if(!lead) return;
+    const btn=t.closest('#btnCustomer');
+    btn.disabled=true; btn.textContent='转移中…';
+    try{
+      await cloud.database.from('leads')
+        .update({ is_customer:true, customer_at:new Date().toISOString(), updated_at:new Date().toISOString() })
+        .eq('id', lead.id);
+      toast('已转入我的客户 ✓');
+      await refresh();
+      const fresh=S.leads.find(x=>String(x.id)===String(lead.id));
+      S.current=fresh;
+      closeSheet();
+      setTimeout(()=>{ if(fresh) openDetail(fresh); },260);
+    }catch(err){
+      toast('转移失败：'+(err.message||''));
+      btn.disabled=false; btn.textContent='转入我的客户 →';
+    }
+    return;
+  }
+
+  // 移出我的客户
+  if(t.closest('#btnUncustomer')){
+    const lead=curLead(); if(!lead) return;
+    if(!confirm(`把「${lead.company||''}」移出我的客户？会回到线索库，跟进记录保留。`)) return;
+    const btn=t.closest('#btnUncustomer');
+    btn.disabled=true; btn.textContent='处理中…';
+    try{
+      await cloud.database.from('leads')
+        .update({ is_customer:false, customer_at:null, updated_at:new Date().toISOString() })
+        .eq('id', lead.id);
+      toast('已移回线索库');
+      await refresh();
+      const fresh=S.leads.find(x=>String(x.id)===String(lead.id));
+      S.current=fresh;
+      closeSheet();
+      setTimeout(()=>{ if(fresh) openDetail(fresh); },260);
+    }catch(err){
+      toast('操作失败：'+(err.message||''));
+      btn.disabled=false; btn.textContent='移出我的客户（回到线索库）';
+    }
+    return;
+  }
+
+  // 修改用户名
+  if(t.closest('#btnEditName')){
+    openSheet(nameForm());
+    return;
+  }
+  if(t.closest('#btnSaveName')){
+    const v=($('#f_name')?.value||'').trim();
+    if(!v){ toast('名称不能为空'); return; }
+    try{
+      localStorage.setItem('radar_display_name', v);
+      if(S.session && S.session.user) S.session.user.name = v;
+      toast('已保存');
+      closeSheet(); render();
+    }catch(_){ toast('保存失败'); }
+    return;
+  }
+
+  // 打开地址检索助手
+  if(t.closest('#btnAddrSearch')){
+    S.searchAddr = '';
+    S.searchResult = null;
+    openSheet(addrSearchView());
+    return;
+  }
+
+  // 生成检索方案
+  if(t.closest('#btnDoAddr')){
+    const addr = ($('#f_addr')?.value||'').trim();
+    if(!addr){ toast('请先填地址'); return; }
+    S.searchAddr = addr;
+    S.searchBusy = true;
+    const btn = t.closest('#btnDoAddr');
+    btn.disabled = true; btn.textContent = '生成中…';
+    try{
+      const r = await aiAddrSearch(addr);
+      S.searchResult = r;
+      S.searchBusy = false;
+      openSheet(addrSearchView());
+    }catch(err){
+      S.searchBusy = false;
+      toast('生成失败：'+(err.message||''));
+      btn.disabled = false; btn.textContent = '生成检索方案';
+    }
+    return;
+  }
+
+  // 复制单个关键词
+  const ck = t.closest('[data-cpkw]');
+  if(ck){ await copyText(ck.dataset.cpkw, '关键词已复制'); return; }
+
+  // 复制全部关键词
+  if(t.closest('[data-cpallkw]')){
+    const list = S.searchResult?.keywords || [];
+    await copyText(list.join('\n'), '全部关键词已复制');
+    return;
+  }
+
+  // 用这个地址去新建线索
+  if(t.closest('#btnAddrToForm')){
+    const typed = ($('#f_addr')?.value||'').trim();
+    const addr = typed || S.searchAddr || S.searchResult?.area || '';
+    closeSheet();
+    setTimeout(()=>{
+      S.editing = null;
+      openSheet(leadForm(null, addr));
+    }, 250);
+    return;
+  }
 });
 
 // card tap → detail
@@ -1233,8 +1619,15 @@ document.addEventListener('click',(e)=>{
   if(l) openDetail(l);
 });
 
+function curLead(){
+  const c = S.current;
+  if(!c) return null;
+  if(typeof c === 'object') return c;
+  return S.leads.find(x=>String(x.id)===String(c)) || null;
+}
+
 function openDetail(l, checks){
-  S.current=l;
+  S.current = (l && typeof l === 'object') ? l : (S.leads.find(x=>String(x.id)===String(l)) || null);
   openSheet(detailSheet(l));
   if(checks){
     const box=document.querySelector('.score-box');

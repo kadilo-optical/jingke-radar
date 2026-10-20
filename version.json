@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "note": "首个可用版本",
+  "version": "1.1.0",
+  "note": "新增：按地址检索助手、复制公司名/信息、我的客户、用户名可修改",
   "apkUrl": "https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk",
   "releasedAt": "2026-10-20"
 }
