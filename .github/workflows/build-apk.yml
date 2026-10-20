@@ -26,8 +26,8 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
+      # GitHub ubuntu runner 已预装 Android SDK（ANDROID_HOME 已设），无需再装。
+      # 只需预先接受许可协议，gradle 才能自动补齐缺的组件。
 
       - name: 安装依赖
         run: npm install --no-audit --no-fund
@@ -46,6 +46,7 @@ jobs:
 
       - name: 构建 Debug APK
         run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
