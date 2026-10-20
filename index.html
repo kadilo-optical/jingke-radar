@@ -143,6 +143,30 @@ button{cursor:pointer;border:none;background:none;padding:0}
 .sheet-h h2{margin:0;font-size:16px;font-weight:600;flex:1}
 .close{width:30px;height:30px;border-radius:50%;background:#EDE7E0;display:grid;place-items:center;font-size:15px;color:var(--ink2)}
 .sheet-body{padding:14px 16px 0}
+.sheet-b{padding:18px 18px 4px}
+
+/* ---------- 改密 / 登录类简洁字段（.fld） ---------- */
+.fld{display:block;margin-bottom:16px}
+.fld > span{display:block;font-size:13px;color:var(--ink2);margin-bottom:7px;font-weight:500}
+.fld input{
+  width:100%;padding:13px 14px;border:1px solid var(--line);border-radius:12px;
+  background:var(--card);outline:none;font-size:15.5px;line-height:1.35;
+}
+.fld input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(196,86,42,.1)}
+.pw-tip{
+  font-size:12.5px;color:var(--ink3);line-height:1.7;margin:0 0 18px;
+  background:var(--brand-lt);border-radius:10px;padding:11px 13px;
+}
+.pw-code-row{display:flex;gap:10px;align-items:stretch}
+.pw-code-row input{flex:1 1 auto;min-width:0}
+.pw-code-btn{
+  flex:0 0 auto;padding:0 16px;border-radius:12px;border:1px solid var(--brand);
+  background:transparent;color:var(--brand-dk);font-size:13.5px;font-weight:600;
+  white-space:nowrap;
+}
+.pw-code-btn:disabled{opacity:.5;border-color:var(--line);color:var(--ink3)}
+.sheet-b .btn{margin-top:10px}
+.sheet-b .hint{margin:0 0 6px}
 
 /* ---------- form ---------- */
 .f{margin-bottom:12px}
@@ -2083,8 +2107,9 @@ function nameForm(){
   </div>`;
 }
 
-/* 修改登录密码：必须先用当前手机号收验证码，通过后才允许改。
-   验证码的意义是"证明这个手机号在你手上"，比旧密码更可靠（忘了密码也能改）。 */
+/* 修改登录密码：手机号 + 验证码 → 直接设新密码。
+   验证码已证明"手机号在你手上"，等价于最高权限，因此不再要求输入旧密码
+   （忘了旧密码也照样能改）。底层走 /v1/reset，不需要 sudo_token。 */
 function pwdForm(){
   return `
   <div class="sheet-h">
@@ -2093,31 +2118,26 @@ function pwdForm(){
   </div>
   <div class="sheet-b">
     <div id="pwdStep1">
+      <p class="pw-tip">验证手机号后即可设置新密码，不需要输入旧密码。</p>
       <label class="fld"><span>手机号</span>
         <input id="pwPhone" type="tel" inputmode="numeric" maxlength="11" placeholder="登录用的手机号">
       </label>
       <label class="fld"><span>验证码</span>
-        <div style="display:flex;gap:8px">
-          <input id="pwCode" type="tel" inputmode="numeric" maxlength="6" placeholder="6位验证码" style="flex:1">
-          <button class="btn ghost" id="btnPwSend" style="width:auto;flex:0 0 auto;padding:10px 14px;margin:0;font-size:13.5px">获取验证码</button>
+        <div class="pw-code-row">
+          <input id="pwCode" type="tel" inputmode="numeric" maxlength="6" placeholder="6位验证码">
+          <button class="pw-code-btn" id="btnPwSend">获取验证码</button>
         </div>
       </label>
       <div class="hint" id="pwErr" style="color:var(--bad);min-height:18px;font-size:12.5px"></div>
       <button class="btn" id="btnPwNext">下一步：设置新密码</button>
-      <p style="font-size:12px;color:var(--ink3);margin:12px 0 0;line-height:1.7">
-        验证码会发送到上面的手机号。没收到请稍等 60 秒再重发。<br>
-        验证通过后才能设置新密码——忘了旧密码也能改。
-      </p>
     </div>
     <div id="pwdStep2" style="display:none">
-      <label class="fld" id="pwOldWrap"><span>当前密码</span>
-        <input id="pwOld" type="text" placeholder="没设过密码就留空" autocomplete="off">
-      </label>
+      <p class="pw-tip" id="pwOkTip">手机号已验证，直接设置新密码。</p>
       <label class="fld"><span>新密码</span>
         <input id="pwNew" type="password" placeholder="至少 6 位，建议字母+数字" autocomplete="new-password">
       </label>
-      <label class="fld"><span>再输一次</span>
-        <input id="pwNew2" type="password" placeholder="确认新密码" autocomplete="new-password">
+      <label class="fld"><span>确认新密码</span>
+        <input id="pwNew2" type="password" placeholder="再输入一次" autocomplete="new-password">
       </label>
       <div class="hint" id="pwErr2" style="color:var(--bad);min-height:18px;font-size:12.5px"></div>
       <button class="btn" id="btnPwSave">保存新密码</button>
@@ -2382,7 +2402,7 @@ document.addEventListener('click', async (e)=>{
   }
 
   // 登录方式切换
-  if(t.closest('#btnToOtp')){ S.loginMode='otp'; render(); return; }
+  if(t.closest('#btnToOtp') || t.closest('#btnGoOtp')){ S.loginMode='otp'; render(); return; }
   if(t.closest('#btnToPwd')){ S.loginMode='pwd'; render(); return; }
   if(t.closest('#btnToReset')){
     S.loginMode='otp'; render();
@@ -2414,12 +2434,15 @@ document.addEventListener('click', async (e)=>{
       if(r.error){
         const msg = r.error.message||'';
         const code = r.error.code||'';
-        if(err) err.textContent =
-          (code==='password_not_set' || /password not set/i.test(msg))
-            ? '这个号还没设过密码。请点下方「验证码登录」进来，之后在「我的」里设一个'
+        const hint = (code==='password_not_set' || /password not set/i.test(msg))
+          ? '这个号还没设过密码。点下面「去验证码登录」进来，之后在「我的」里设一个'
           : /incorrect|invalid_username/i.test(msg)
-            ? '手机号或密码不对。首次使用请点「验证码登录」'
-          : msg;
+            ? '手机号或密码不对。忘了密码就点下面「去验证码登录」，验证手机号后可直接改密码'
+            : msg;
+        // 错误提示 + 一键转验证码登录，别让用户自己找入口
+        const box = err ? (err.parentElement || err) : null;
+        if(err) err.innerHTML = esc(hint) +
+          ` <a href="javascript:void(0)" id="btnGoOtp" style="color:var(--brand-dk);text-decoration:underline;white-space:nowrap">去验证码登录</a>`;
         btn.disabled=false; btn.textContent=old;
         return;
       }
@@ -2757,10 +2780,10 @@ document.addEventListener('click', async (e)=>{
 
   // 修改登录密码
   if(t.closest('#btnEditPwd')){
-    PWD_FLOW = { phone:'', verificationId:null, token:null };
+    PWD_FLOW = { phone:'', verificationId:null, verificationToken:null, verified:false };
     openSheet(pwdForm());
     const inp=$('#pwPhone');
-    if(inp) inp.value = (S.session?.user?.phone || '').replace(/^\+?86/,'');
+    if(inp) inp.value = (S.session?.user?.phone || '').replace(/^\+?86/,'').replace(/\D/g,'');
     return;
   }
 
@@ -2803,32 +2826,31 @@ document.addEventListener('click', async (e)=>{
     const btn=t.closest('#btnPwNext');
     btn.disabled=true; btn.textContent='验证中…';
     try{
-      // 只校验验证码，不登录、不注册：拿到一次性 verification_token
-      const v=await cloud.auth.verifyOtp({
-        phone: PWD_FLOW.phone,
-        verificationId: PWD_FLOW.verificationId,
-        isExistingUser: PWD_FLOW.isExistingUser,
-        token: code,
+      // 只校验验证码，拿到一次性 verification_token（后续 /v1/reset 用它改密）
+      const v=await cloud.auth.request('/v1/verification/verify', {
+        method:'POST',
+        body:{ verification_id: PWD_FLOW.verificationId, verification_code: code },
       });
       if(v.error){
-        if(err) err.textContent=/match|无效/i.test(v.error.message||'') ? '验证码不对，请重新输入' : (v.error.message||'验证失败');
+        const m=v.error.message||'';
+        if(err) err.textContent = /does not match|无效/i.test(m) ? '验证码不对，请重新输入' : (m||'验证失败');
         btn.disabled=false; btn.textContent='下一步：设置新密码';
         return;
       }
-      // isExistingUser=true 时 verifyOtp 会直接完成登录并写入会话，
-      // 这样后面的 sudo / 改密就有合法 token 了
-      PWD_FLOW.token = code;
+      const vt = (v.data && v.data.verification_token) || '';
+      if(!vt){
+        if(err) err.textContent='验证没拿到凭据，请重新获取验证码';
+        btn.disabled=false; btn.textContent='下一步：设置新密码';
+        return;
+      }
+      // 关键：验证码通过就等于证明了手机号归属，不再要求输入旧密码
+      PWD_FLOW.verificationToken = vt;
       PWD_FLOW.verified = true;
-      if(v.data && (v.data.session || v.data.accessToken || v.data.user)){
-        S.session = v.data.session || v.data;
-      }
-      const fresh = await cloud.auth.getSession().catch(()=>null);
-      if(fresh && fresh.data && fresh.data.user){
-        S.session = fresh.data;
-        PWD_FLOW.phoneVerified = true;
-      }
       $('#pwdStep1').style.display='none';
       $('#pwdStep2').style.display='';
+      const tip=$('#pwOkTip');
+      if(tip) tip.textContent = `手机号 ${PWD_FLOW.phone} 已验证，直接设置新密码即可。`;
+      setTimeout(()=>{ const i=$('#pwNew'); if(i) i.focus(); }, 120);
     }catch(e){
       if(err) err.textContent=e.message||'验证失败';
       btn.disabled=false; btn.textContent='下一步：设置新密码';
@@ -2847,15 +2869,29 @@ document.addEventListener('click', async (e)=>{
     const btn=t.closest('#btnPwSave');
     btn.disabled=true; btn.textContent='保存中…';
     try{
-      const oldPwd = ($('#pwOld')?.value||'').trim();
-      const r=await cloud.auth.resetPasswordForOld({
-        oldPassword: oldPwd,
-        newPassword: p1,
+      if(!PWD_FLOW || !PWD_FLOW.verificationToken){
+        if(err) err.textContent='请先完成手机号验证';
+        btn.disabled=false; btn.textContent='保存新密码';
+        return;
+      }
+      // 凭验证码换来的 verification_token 直接重置密码，无需旧密码
+      const normPhone = (() => {
+        const t = String(PWD_FLOW.phone||'').replace(/\D/g,'');
+        const s = t.startsWith('0086') ? t.slice(4) : (t.startsWith('86') && t.length===13 ? t.slice(2) : t);
+        return /^1\d{10}$/.test(s) ? '+86 ' + s : PWD_FLOW.phone;
+      })();
+      const r=await cloud.auth.request('/v1/reset', {
+        method:'POST',
+        body: {
+          phone_number: normPhone,
+          new_password: p1,
+          verification_token: PWD_FLOW.verificationToken,
+        },
       });
       if(r && r.error){
         const m = r.error.message||'';
-        if(err) err.textContent = /incorrect|invalid_username|password/i.test(m)
-          ? '当前密码不对。没设过密码请留空；设过但忘了，可用「验证码登录」进来后再改'
+        if(err) err.textContent = /token|jwt/i.test(m)
+          ? '验证已过期，请关闭后重新点「修改登录密码」'
           : '修改失败：'+m;
         btn.disabled=false; btn.textContent='保存新密码';
         return;
@@ -2863,7 +2899,24 @@ document.addEventListener('click', async (e)=>{
       toast('登录密码已更新');
       PWD_FLOW = null;
       closeSheet();
+      // 立刻用新密码试一次登录：成功就直接进工作台，省得用户还要再输一遍
+      try {
+        const phone = (S.session?.user?.phone || '').replace(/^\+?86/, '').replace(/\D/g, '');
+        if (phone) {
+          const lg = await cloud.auth.signInWithPassword({ phone, password: p1 });
+          if (!lg.error) {
+            S.session = lg.data?.session || lg.data || await cloud.auth.getSession();
+            await afterLogin(phone);
+            toast('密码已更新，已自动登录', 2600);
+            return;
+          }
+        }
+      } catch (_) {}
       render();
+      // 密码写进去了但登录没通过：如实提示，别让人以为改好了却登不进去
+      setTimeout(()=>{
+        toast('密码已保存。若密码登录仍提示错误，请用「验证码登录」进入后重设一次', 4200);
+      }, 600);
     }catch(e){
       if(err) err.textContent='修改失败：'+(e.message||'');
       btn.disabled=false; btn.textContent='保存新密码';
@@ -3078,7 +3131,7 @@ async function bootSession(){
    改用最朴素也最可靠的做法——版本号由"打开 App 的地址"带进来：
      分享/下发链接时加 ?v=1.3.2，App 启动读到 v 比自身新就提示更新。
    不涉及任何跨域请求，纯本地判断。 */
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.4.3';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
