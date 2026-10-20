@@ -256,8 +256,21 @@ button{cursor:pointer;border:none;background:none;padding:0}
 <div class="sheet" id="sheet"></div>
 <div class="toast" id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js" crossorigin="anonymous"></script>
 <script src="/public-config.js"></script>
+<!-- SDK 加载：优先本地（随包发布，不依赖外网），本地文件不存在时回退到公共 CDN。
+     早期版本只引 jsDelivr，国内手机网络访问不了 jsDelivr 时会整页白屏——本地化就是为解决这个。
+     sdk.js 与 public-config.js 同目录，网页版和 App 内（assets/public）都能直接命中本地文件。 -->
+<script src="/sdk.js"></script>
+<script>
+if(typeof WorkBuddyCloud === 'undefined'){
+  document.write('<script src="https://unpkg.com/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"><\/script>');
+}
+</script>
+<script>
+if(typeof WorkBuddyCloud === 'undefined'){
+  document.write('<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"><\/script>');
+}
+</script>
 <script>
 /* ============================================================
    镜客雷达 — 眼镜贸易商精准拓客
@@ -273,6 +286,8 @@ if(typeof WorkBuddyCloud === 'undefined' || !window.PUBLIC_CONFIG){
     + '</div>';
   throw new Error('依赖未就绪');
 }
+// 让上面的 SDK 加载器知道：主逻辑已就位，可以安全地继续了
+window.__mainScriptLoaded = true;
 
 const cloud = WorkBuddyCloud.createWorkBuddyCloud({
   endpoint: window.PUBLIC_CONFIG.endpoint,
@@ -2182,16 +2197,49 @@ async function bootSession(){
 /* ---------- 版本检测：让装了 APK 的人知道线上有新版本 ----------
    APK 里的网页是打包进去的，改完线上网页不会自动进到 App 里。
    这里在 App 壳内启动时读一次线上的 version.json，与自身版本比对，
-   发现更新就提示用户。网页版不需要这个逻辑（网页本身永远是最新的）。 */
-const APP_VERSION = '1.3.0';
+   发现更新就提示用户。网页版不需要这个逻辑（网页本身永远是最新的）。
+
+   平台限制（实测）：
+   1) 发布域名要求所有资源带 sharecode，裸路径一律 403；
+   2) 发布域名不回 Access-Control-Allow-Origin，App 内 origin 是 https://localhost，
+      跨域 fetch 会被 CORS 拦死，JSONP 也不会被包装成回调。
+   结论：App 内**不可能**主动去线上比对版本。
+   改用最朴素也最可靠的做法——版本号由"打开 App 的地址"带进来：
+     分享/下发链接时加 ?v=1.3.2，App 启动读到 v 比自身新就提示更新。
+   不涉及任何跨域请求，纯本地判断。 */
+const APP_VERSION = '1.3.2';
+const SHARECODE = (function(){
+  try{
+    const u = new URL(location.href);
+    return u.searchParams.get('sharecode') || '';
+  }catch(_){ return ''; }
+})();
+const PUBLISHED_ORIGIN = 'https://glasses-radar.app.workbuddy.host';
+const FALLBACK_SHARECODE = 'ABA2SVUO5X';   // 发布链接里的固定分享码
+
+/* 从启动地址里读 ?v=（或 #v=）带来的最新版本号，无需联网 */
+function versionFromLaunchUrl(){
+  try{
+    const u = new URL(location.href);
+    const v = u.searchParams.get('v') || u.searchParams.get('version');
+    if(v && /^\d+(\.\d+)*$/.test(v)) return v;
+    const m = String(u.hash||'').match(/[?#&]v=(\d+(?:\.\d+)*)/);
+    return m ? m[1] : null;
+  }catch(_){ return null; }
+}
+
+async function fetchVersionJson(){
+  // 只读本机可用信息：启动地址带的版本号
+  const v = versionFromLaunchUrl();
+  if(!v) return null;
+  return { version: v, note: '', apkUrl: 'https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk' };
+}
 
 async function checkAppUpdate(){
   if(window.APP_ENV !== 'native') return;         // 只在 App 壳内检查
   try{
-    const r = await fetch('https://glasses-radar.app.workbuddy.host/version.json?_=' + Date.now(), { cache:'no-store' });
-    if(!r.ok) return;
-    const remote = await r.json();
-    if(!remote || !remote.version) return;
+    const remote = await fetchVersionJson();
+    if(!remote) return;
     if(cmpVersion(remote.version, APP_VERSION) <= 0) return;
     showUpdateBar(remote);
   }catch(_){ /* 网络不好就静默跳过，不打扰用户 */ }

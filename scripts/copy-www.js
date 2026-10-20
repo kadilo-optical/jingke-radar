@@ -6,7 +6,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const WWW = path.join(ROOT, 'www');
-const FILES = ['index.html', 'public-config.js'];
+const FILES = ['index.html', 'public-config.js', 'sdk.js'];
 
 const verFile = path.join(ROOT, 'version.json');
 if (!fs.existsSync(verFile)) {
