@@ -1,12 +1,15 @@
 name: Build Android APK
 
 # 触发方式：
-#  1) 在 GitHub 网页 Actions 页面手动点 Run workflow
-#  2) 推送到 main 分支自动构建
+#  1) 推送到 main 分支自动构建
+#  2) 在 GitHub 网页 Actions 页面手动点 Run workflow
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
+
+permissions:
+  contents: write        # 发布 Release 需要
 
 jobs:
   build:
@@ -29,10 +32,17 @@ jobs:
       # GitHub ubuntu runner 已预装 Android SDK（ANDROID_HOME 已设），无需再装。
       # 只需预先接受许可协议，gradle 才能自动补齐缺的组件。
 
+      - name: 读取版本号
+        id: ver
+        run: |
+          V=$(node -p "require('./version.json').version")
+          echo "version=$V" >> $GITHUB_OUTPUT
+          echo "本次构建版本: $V"
+
       - name: 安装依赖
         run: npm install --no-audit --no-fund
 
-      - name: 同步网页资源到 www
+      - name: 同步网页资源（自动注入版本号）
         run: npm run sync:www
 
       - name: 生成 Android 工程
@@ -41,8 +51,10 @@ jobs:
       - name: Capacitor sync
         run: npx cap sync android
 
-      - name: 确认应用名（由 capacitor.config.json 的 appName 写入）
-        run: cat android/app/src/main/res/values/strings.xml
+      - name: 确认应用名与版本
+        run: |
+          cat android/app/src/main/res/values/strings.xml
+          grep -n "versionName\|versionCode" android/app/build.gradle | head -5
 
       - name: 构建 Debug APK
         run: |
@@ -51,9 +63,34 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: 上传 APK 产物
+      - name: 重命名 APK（构建产物带版本号便于识别）
+        run: |
+          cd android/app/build/outputs/apk/debug
+          ls -la
+          cp app-debug.apk "jingke-radar-v${{ steps.ver.outputs.version }}.apk"
+          # Releases 里用固定文件名，App 内的更新直链才不会失效
+          cp app-debug.apk "jingke-radar.apk"
+
+      - name: 上传 APK 产物（构建页可下载）
         uses: actions/upload-artifact@v4
         with:
           name: jingke-radar-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/debug/jingke-radar-v*.apk
           if-no-files-found: error
+
+      # 发布到 Releases：给 App 内的"立即更新"提供固定直链
+      # 固定地址 https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk
+      - name: 发布到 Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: 镜客雷达 v${{ steps.ver.outputs.version }}
+          body: |
+            镜客雷达 v${{ steps.ver.outputs.version }}
+
+            - 提交：${{ github.sha }}
+
+            下载下方 jingke-radar.apk 安装即可（覆盖安装，数据不会丢）。
+          files: android/app/build/outputs/apk/debug/jingke-radar.apk
+          fail_on_unmatched_files: false
+          make_latest: true
