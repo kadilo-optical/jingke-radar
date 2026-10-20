@@ -741,31 +741,47 @@ function addrSearchView(){
 function renderTopSub(){
   const n = S.leads.length;
   const a = S.leads.filter(l=>l.grade==='A').length;
-  $('#topSub').textContent = displayName()
-    ? `${S.session.user.name} · 共${n}条线索`
+  // 注意：本机改过名时 displayName() 有值，但未登录状态下 S.session 是 null，
+  // 这里必须用 displayName() 而不是 S.session.user.name，否则整页渲染中断、白屏。
+  const who = displayName();
+  $('#topSub').textContent = (S.session && who && who !== '未命名用户')
+    ? `${who} · 共${n}条线索`
     : (n?`共 ${n} 条线索 · A级 ${a} 条`:'眼镜贸易商精准拓客');
 }
 
 function render(){
-  renderTopSub();
+  try{
+    renderTopSub();
+  }catch(e){ console.warn('顶部信息渲染失败（已忽略）', e); }
   const app=$('#app');
-  if(!S.session){
-    app.innerHTML = loginView();
-    return;
-  }
-  if(S.loading && S.leads.length===0){
-    app.innerHTML = `<div class="loading"><div class="spin"></div>正在加载线索库…</div>`;
-    return;
-  }
-  if(S.tab==='leads') app.innerHTML = leadsView();
-  else if(S.tab==='todo') app.innerHTML = todoView();
-  else if(S.tab==='stats') app.innerHTML = statsView();
-  else app.innerHTML = meView();
+  try{
+    if(!S.session){
+      app.innerHTML = loginView();
+      return;
+    }
+    if(S.loading && S.leads.length===0){
+      app.innerHTML = `<div class="loading"><div class="spin"></div>正在加载线索库…</div>`;
+      return;
+    }
+    if(S.tab==='leads') app.innerHTML = leadsView();
+    else if(S.tab==='todo') app.innerHTML = todoView();
+    else if(S.tab==='stats') app.innerHTML = statsView();
+    else app.innerHTML = meView();
 
-  $('#fab').style.display = (S.tab==='leads'||S.tab==='todo') ? 'grid' : 'none';
-  document.querySelectorAll('.nav button').forEach(b=>{
-    b.classList.toggle('on', b.dataset.tab===S.tab);
-  });
+    const fab=$('#fab');
+    if(fab) fab.style.display = (S.tab==='leads'||S.tab==='todo') ? 'grid' : 'none';
+    document.querySelectorAll('.nav button').forEach(b=>{
+      b.classList.toggle('on', b.dataset.tab===S.tab);
+    });
+  }catch(e){
+    // 任何一屏渲染出错都不该让整个 App 变白屏
+    console.error('渲染失败', e);
+    app.innerHTML = `<div class="loading" style="flex-direction:column;gap:12px;padding:40px 20px;text-align:center">
+      <div style="color:var(--ink2);font-size:14px">页面加载出错了</div>
+      <div style="color:var(--ink3);font-size:12px">${esc(String(e && e.message || e))}</div>
+      <button class="btn" style="width:auto;padding:10px 20px" onclick="location.reload()">重新加载</button>
+    </div>`;
+  }
 }
 
 function loginView(){
@@ -1676,7 +1692,7 @@ async function bootSession(){
    APK 里的网页是打包进去的，改完线上网页不会自动进到 App 里。
    这里在 App 壳内启动时读一次线上的 version.json，与自身版本比对，
    发现更新就提示用户。网页版不需要这个逻辑（网页本身永远是最新的）。 */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 async function checkAppUpdate(){
   if(window.APP_ENV !== 'native') return;         // 只在 App 壳内检查
@@ -1723,7 +1739,17 @@ function showUpdateBar(remote){
 }
 
 (function boot(){
-  render();
+  // 首屏渲染绝不允许把整页搞白：出错就回退到登录页/错误提示
+  try{ render(); }
+  catch(e){
+    console.error('首屏渲染失败', e);
+    const app=$('#app');
+    if(app) app.innerHTML = `<div class="loading" style="flex-direction:column;gap:12px;padding:40px 20px;text-align:center">
+      <div style="font-size:14px;color:var(--ink2)">启动出错了</div>
+      <div style="font-size:12px;color:var(--ink3)">${esc(String(e && e.message || e))}</div>
+      <button class="btn" style="width:auto;padding:10px 20px" onclick="location.reload()">重新加载</button>
+    </div>`;
+  }
   (async ()=>{
     try{
       // OAuth 回调分发（WorkBuddy 账号登录）——必须在任何路由守卫之前
