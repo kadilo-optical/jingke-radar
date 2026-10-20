@@ -45,6 +45,20 @@ button{cursor:pointer;border:none;background:none;padding:0}
 }
 .iconbtn:active{background:rgba(255,255,255,.3)}
 
+/* 顶部版本号：一直是可见的，点一下手动检查更新 */
+.verbtn{
+  flex:0 0 auto;margin-right:8px;padding:0 9px;height:24px;border-radius:8px;
+  background:rgba(255,255,255,.15);color:rgba(255,255,255,.92);
+  font-size:11.5px;font-weight:600;letter-spacing:.2px;line-height:24px;
+  border:none;font-variant-numeric:tabular-nums;
+}
+.verbtn:active{background:rgba(255,255,255,.3)}
+.verbtn.new{
+  background:#fff;color:var(--brand-dk);
+  animation:verPulse 1.6s ease-in-out infinite;
+}
+@keyframes verPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,.55)}50%{box-shadow:0 0 0 5px rgba(255,255,255,0)}}
+
 /* ---------- search ---------- */
 .searchwrap{padding:12px 16px 4px;position:sticky;top:calc(52px + env(safe-area-inset-top));z-index:30;background:var(--bg)}
 .search{
@@ -261,6 +275,7 @@ button{cursor:pointer;border:none;background:none;padding:0}
       <h1>镜客雷达</h1>
       <div class="sub" id="topSub">眼镜贸易商精准拓客</div>
     </div>
+    <button class="verbtn" id="btnVer" title="当前版本 / 检查更新">v<span id="verNum">1.4.4</span></button>
     <button class="iconbtn" id="btnUser" title="账号">👤</button>
   </div>
 </header>
@@ -2072,7 +2087,10 @@ function meView(){
       <div class="it"><span class="k">${admin?'全部客户':'我的客户'}</span><span class="v">${myCount} 家</span></div>
       <div class="it"><span class="k">数据位置</span><span class="v">云端 · ${admin?'全员可见':'仅本人可见'}</span></div>
       <div class="it"><span class="k">自动登录</span><span class="v">${(()=>{const d=autoLoginDaysLeft(); return d>0?`已开启 · 剩余 ${d} 天`:'未开启';})()}</span></div>
-      <div class="it"><span class="k">版本</span><span class="v">v${esc(APP_VERSION)}</span></div>
+      <div class="it" id="itCheckUpdate" style="cursor:pointer">
+        <span class="k">当前版本</span>
+        <span class="v" style="color:var(--brand-dk)">v${esc(APP_VERSION)} <span style="font-weight:400;font-size:12px">· 检查更新 ›</span></span>
+      </div>
     </div>
     <div class="script-box">
       <h3>筛选口径（写死在 App 里）</h3>
@@ -2929,6 +2947,10 @@ document.addEventListener('click', async (e)=>{
     openSheet(nameForm());
     return;
   }
+  if(t.closest('#itCheckUpdate')){
+    onVerClick();
+    return;
+  }
   if(t.closest('#btnSaveName')){
     const v=($('#f_name')?.value||'').trim();
     if(!v){ toast('名称不能为空'); return; }
@@ -3119,19 +3141,17 @@ async function bootSession(){
 }
 
 /* ---------- 版本检测：让装了 APK 的人知道线上有新版本 ----------
-   APK 里的网页是打包进去的，改完线上网页不会自动进到 App 里。
-   这里在 App 壳内启动时读一次线上的 version.json，与自身版本比对，
-   发现更新就提示用户。网页版不需要这个逻辑（网页本身永远是最新的）。
+   APK 里的网页是打包进去的，改完线上网页不会自动进到 App 里，
+   所以必须由 App 主动去线上问「现在最新是几版」，比自己新就提示升级。
 
-   平台限制（实测）：
-   1) 发布域名要求所有资源带 sharecode，裸路径一律 403；
-   2) 发布域名不回 Access-Control-Allow-Origin，App 内 origin 是 https://localhost，
-      跨域 fetch 会被 CORS 拦死，JSONP 也不会被包装成回调。
-   结论：App 内**不可能**主动去线上比对版本。
-   改用最朴素也最可靠的做法——版本号由"打开 App 的地址"带进来：
-     分享/下发链接时加 ?v=1.3.2，App 启动读到 v 比自身新就提示更新。
-   不涉及任何跨域请求，纯本地判断。 */
-const APP_VERSION = '1.4.3';
+   实测结论（2026-10，之前认为「App 内不可能联网比对」是错的）：
+   1) 云端接口对 Origin: https://localhost 明确放行——
+      Access-Control-Allow-Origin: https://localhost，正好是 App 的 origin；
+   2) 但 version.json 是纯静态文件，不带任何 CORS 头，网页 fetch 拿不到；
+   3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
+   因此双通道取版本：先查云端 app_version 表（最可靠），
+   再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
+const APP_VERSION = '1.4.4';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
@@ -3140,8 +3160,20 @@ const SHARECODE = (function(){
 })();
 const PUBLISHED_ORIGIN = 'https://glasses-radar.app.workbuddy.host';
 const FALLBACK_SHARECODE = 'ABA2SVUO5X';   // 发布链接里的固定分享码
+const APK_URL = 'https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk';
 
-/* 从启动地址里读 ?v=（或 #v=）带来的最新版本号，无需联网 */
+/* 原生 HTTP：App 内用 CapacitorHttp（不受同源策略限制），网页版用普通 fetch */
+function nativeHttpGet(url, timeoutMs){
+  const cap = (typeof window !== 'undefined') && window.Capacitor
+    && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp;
+  if (cap && cap.get) {
+    return cap.get({ url, connectTimeout: timeoutMs || 8000, readTimeout: timeoutMs || 8000 })
+      .then(r => (typeof r.data === 'string' ? r.data : JSON.stringify(r.data)));
+  }
+  return fetch(url, { cache: 'no-store' }).then(r => r.text());
+}
+
+/* 从启动地址里读 ?v=（调试入口：可以手动指定一个更高版本号来验提示条） */
 function versionFromLaunchUrl(){
   try{
     const u = new URL(location.href);
@@ -3152,21 +3184,107 @@ function versionFromLaunchUrl(){
   }catch(_){ return null; }
 }
 
-async function fetchVersionJson(){
-  // 只读本机可用信息：启动地址带的版本号
-  const v = versionFromLaunchUrl();
-  if(!v) return null;
-  return { version: v, note: '', apkUrl: 'https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk' };
+/* 通道 1：云端 app_version 表 —— id 固定为 1 的单行，所有客户端都读得到 */
+async function versionFromCloud(){
+  const { data, error } = await cloud.database
+    .from('app_version')
+    .select('version,note,apk_url,released_at')
+    .eq('id', 1);
+  if (error || !data || !data.length) return null;
+  const row = data[0];
+  if (!row || !row.version) return null;
+  return {
+    version: String(row.version),
+    note: row.note || '',
+    apkUrl: row.apk_url || APK_URL,
+    releasedAt: row.released_at || '',
+  };
 }
 
-async function checkAppUpdate(){
-  if(window.APP_ENV !== 'native') return;         // 只在 App 壳内检查
+/* 通道 2：静态 version.json（发布目录里那份），再用启动地址的 ?v= 兜底 */
+async function versionFromStaticFile(){
+  try{
+    const txt = await nativeHttpGet(PUBLISHED_ORIGIN + '/version.json?sharecode=' + FALLBACK_SHARECODE, 8000);
+    const obj = JSON.parse(txt);
+    if (obj && obj.version) {
+      return { version: String(obj.version), note: obj.note || '', apkUrl: obj.apkUrl || APK_URL };
+    }
+  }catch(_){}
+  const v = versionFromLaunchUrl();
+  if (v) return { version: v, note: '', apkUrl: APK_URL };
+  return null;
+}
+
+async function fetchVersionJson(){
+  let r = null;
+  try { r = await versionFromCloud(); } catch(_){}
+  if (!r) { try { r = await versionFromStaticFile(); } catch(_){} }
+  return r;
+}
+
+let UPDATE_CHECKED = false;
+async function checkAppUpdate(force){
+  if(window.APP_ENV !== 'native' && !force) return;   // 只在 App 壳内自动检查
+  if(UPDATE_CHECKED && !force) return;
+  UPDATE_CHECKED = true;
   try{
     const remote = await fetchVersionJson();
     if(!remote) return;
-    if(cmpVersion(remote.version, APP_VERSION) <= 0) return;
+    if(cmpVersion(remote.version, APP_VERSION) <= 0){
+      syncVerBadge();
+      if(force) toast('已是最新版本 v' + APP_VERSION);
+      return;
+    }
+    syncVerBadge(remote);
     showUpdateBar(remote);
   }catch(_){ /* 网络不好就静默跳过，不打扰用户 */ }
+}
+
+/* 顶部版本号角标：显示本机安装的版本；
+   一旦查到线上有更新，变成高亮样式（白底 + 呼吸光）提示点它 */
+function syncVerBadge(remote){
+  const el = document.getElementById('verNum');
+  if(el) el.textContent = APP_VERSION;
+  const btn = document.getElementById('btnVer');
+  if(!btn) return;
+  if(remote && cmpVersion(remote.version, APP_VERSION) > 0){
+    btn.classList.add('new');
+    btn.title = '发现新版本 v' + remote.version + '，点击升级';
+  }else{
+    btn.classList.remove('new');
+    btn.title = '当前版本 v' + APP_VERSION + '，点击检查更新';
+  }
+}
+
+/* 点顶部版本号：有更新就直接弹升级条，没有就提示已是最新 */
+async function onVerClick(){
+  const btn = document.getElementById('btnVer');
+  if(btn && btn.classList.contains('new')){
+    // 已知有更新：直接给出升级条，不再等网络
+    try{
+      const remote = await fetchVersionJson();
+      if(remote && cmpVersion(remote.version, APP_VERSION) > 0){ showUpdateBar(remote, true); return; }
+    }catch(_){}
+  }
+  if(btn) btn.textContent = '检查中…';
+  try{
+    const remote = await fetchVersionJson();
+    if(remote && cmpVersion(remote.version, APP_VERSION) > 0){
+      syncVerBadge(remote);
+      showUpdateBar(remote, true);
+    }else if(remote){
+      toast('已是最新版本 v' + APP_VERSION);
+      syncVerBadge();
+    }else{
+      // 取不到线上版本（弱网/被墙）：不要谎称最新，如实说明
+      toast('暂时连不上更新服务器，请检查网络后重试');
+    }
+  }catch(e){
+    toast('检查更新失败：' + (e.message || '网络异常'));
+  }finally{
+    const b = document.getElementById('btnVer');
+    if(b) b.textContent = 'v' + APP_VERSION;
+  }
 }
 
 function cmpVersion(a, b){
@@ -3179,15 +3297,16 @@ function cmpVersion(a, b){
   return 0;
 }
 
-function showUpdateBar(remote){
-  if(document.querySelector('#updateBar')) return;
+function showUpdateBar(remote, force){
+  const old = document.querySelector('#updateBar');
+  if(old){ if(!force) return; old.remove(); }
   const el = document.createElement('div');
   el.id = 'updateBar';
   el.style.cssText = 'position:fixed;left:12px;right:12px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:9999;'
     + 'background:#23201D;color:#fff;border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;'
     + 'box-shadow:0 8px 28px rgba(0,0,0,.28);font-size:14px;line-height:1.45';
   el.innerHTML = '<div style="flex:1">'
-    + '<div style="font-weight:600;margin-bottom:2px">发现新版本 ' + esc(String(remote.version)) + '</div>'
+    + '<div style="font-weight:600;margin-bottom:2px">发现新版本 v' + esc(String(remote.version)) + '</div>'
     + '<div style="color:#C9C2BB;font-size:12.5px">' + esc(remote.note || '修复问题、优化体验') + '</div>'
     + '</div>'
     + '<button id="updateGo" style="background:#C4562A;color:#fff;border:none;padding:9px 16px;border-radius:9px;font-size:13.5px;font-weight:600;white-space:nowrap">立即更新</button>'
@@ -3196,10 +3315,18 @@ function showUpdateBar(remote){
   el.querySelector('#updateLater').onclick = ()=> el.remove();
   el.querySelector('#updateGo').onclick = ()=>{
     // Releases 里用的是固定文件名，所以这个地址永远指向最新版 APK
-    const url = remote.apkUrl || 'https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk';
-    location.href = url;
+    const url = remote.apkUrl || APK_URL;
+    // 网页版没法直接装 APK，给个可点的说明；App 内直接跳浏览器下载
+    if(window.APP_ENV === 'native'){ location.href = url; }
+    else { window.open(url, '_blank'); }
   };
 }
+
+/* 顶部版本号点击（用事件委托，避免每次 render 后绑定失效） */
+document.addEventListener('click', (e)=>{
+  const t = e.target;
+  if(t && t.closest && t.closest('#btnVer')){ e.preventDefault(); onVerClick(); }
+}, true);
 
 /* ============================================================
    到点提醒：每分钟检查一次「下次跟进」，到点弹窗 + 响铃
@@ -3322,6 +3449,8 @@ function startReminders(){
       <button class="btn" style="width:auto;padding:10px 20px" onclick="location.reload()">重新加载</button>
     </div>`;
   }
+  // 顶部版本号：写死的是本机安装的版本，保证任何情况下都能看到
+  syncVerBadge();
   (async ()=>{
     try{
       // OAuth 回调分发（WorkBuddy 账号登录）——必须在任何路由守卫之前

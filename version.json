@@ -1,6 +1,6 @@
 {
-  "version": "1.4.3",
-  "note": "改密更简单：验证码通过后直接设新密码，不再要求输入旧密码；改密页间距加大不再挤压；密码登录失败时可一键转「验证码登录」",
+  "version": "1.4.4",
+  "note": "新增：顶部显示版本号，点击可手动检查更新；打开 App 自动检测新版本并弹升级提示（从此不用再手动问有没有新版）",
   "apkUrl": "https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk",
   "releasedAt": "2026-10-20"
 }

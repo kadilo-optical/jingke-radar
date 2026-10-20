@@ -1,6 +1,6 @@
 {
   "name": "jingke-radar",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "description": "镜客雷达 — 眼镜贸易商精准拓客工作台（Capacitor 壳）",
   "scripts": {
