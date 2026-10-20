@@ -295,10 +295,12 @@ const S = {
   searchAddr: '',  // 地址检索助手的输入
   searchResult: null, // AI 生成的检索方案
   searchBusy: false,
+  loginMode: 'pwd',   // 'pwd' | 'otp'
 };
 
 const GRADES = ['A','B','C'];
 let PENDING_OTP = null;   // { phone, verificationId, isExistingUser }
+let PWD_FLOW = null;       // 改密流程：{ phone, verificationId, isExistingUser, verified }
 const STATUSES = ['待跟进','已联系','已加微信','已报价','意向','已成交','暂搁置','无效'];
 const PLATFORMS = ['Shein','Temu','TikTok','阿里国际站','1688','淘宝/天猫','拼多多','抖音','速卖通','亚马逊','义乌购','线下档口'];
 
@@ -365,12 +367,43 @@ function fmtDate(d){
   const t=new Date(d); if(isNaN(t)) return d;
   return `${t.getMonth()+1}月${t.getDate()}日`;
 }
+/* ---------- 跟进时间：存 "YYYY-MM-DDTHH:mm"（本地时区），兼容历史纯日期 ---------- */
+function toLocalInput(v){
+  if(!v) return '';
+  const str = String(v).trim();
+  // 已经是 datetime-local 格式
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}`;
+  // 纯日期 → 默认早上 9:00
+  const d = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(d) return `${d[1]}-${d[2]}-${d[3]}T09:00`;
+  return '';
+}
+function parseFollowAt(v){
+  if(!v) return null;
+  const s = String(v).trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return new Date(s+'T09:00:00');
+  const d = new Date(s.replace(' ','T'));
+  return isNaN(d.getTime()) ? null : d;
+}
+function fmtDateTime(v){
+  const d = parseFollowAt(v);
+  if(!d) return '';
+  const p=n=>String(n).padStart(2,'0');
+  const now=new Date();
+  const sameYear = d.getFullYear()===now.getFullYear();
+  const date = sameYear ? `${d.getMonth()+1}月${d.getDate()}日` : `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+  return `${date} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 function daysFrom(d){
-  if(!d) return null;
-  const a=new Date(d); a.setHours(0,0,0,0);
+  if(!d) return 9999;
+  const t = d instanceof Date ? d : parseFollowAt(d);
+  if(!t) return 9999;
+  const a=new Date(t); a.setHours(0,0,0,0);
   const b=new Date(); b.setHours(0,0,0,0);
   return Math.round((a-b)/86400000);
 }
+
 function todayStr(){
   const d=new Date(); const p=n=>String(n).padStart(2,'0');
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
@@ -784,27 +817,89 @@ function render(){
   }
 }
 
+const DEFAULT_PWD = '123123';
+const PWD_SYNCED_KEY = 'radar_pwd_synced';   // 记录"本机已尝试为账号开通初始密码"的手机号
+
+/* 为验证码注册的老账号补一个初始密码（尽力而为，不阻断登录）。
+   SDK 修改密码需要先 sudo（校验旧密码）；老账号没设过密码时旧密码传空试一次，
+   不行就记为"未开通"，登录页会提示走验证码登录，不会把人锁在门外。 */
+async function ensureDefaultPassword(phone){
+  try{
+    if(localStorage.getItem(PWD_SYNCED_KEY) === phone) return;
+    const r = await cloud.auth.resetPasswordForOld({ oldPassword:'', newPassword: DEFAULT_PWD });
+    if(r && r.error){
+      console.warn('初始密码未开通（老账号需要手动设置）:', r.error.message);
+      return;
+    }
+    localStorage.setItem(PWD_SYNCED_KEY, phone);
+    toast(`已为你开通密码登录，初始密码 ${DEFAULT_PWD}`, 2600);
+  }catch(e){
+    console.warn('初始密码开通失败:', e && e.message);
+  }
+}
+
 function loginView(){
+  const m = S.loginMode || 'pwd';
   return `<div class="login">
     <div class="ic">◎</div>
     <h2>镜客雷达</h2>
     <p>眼镜贸易商精准拓客工作台<br>线索云端同步，团队共享</p>
     <div class="f" style="text-align:left">
       <label>手机号</label>
-      <input id="lgPhone" type="tel" inputmode="numeric" maxlength="11" placeholder="11位手机号">
+      <input id="lgPhone" type="tel" inputmode="numeric" maxlength="11" placeholder="11位手机号" autocomplete="username">
+    </div>
+    ${m==='pwd' ? `
+    <div class="f" style="text-align:left">
+      <label>密码</label>
+      <div style="position:relative">
+        <input id="lgPwd" type="password" placeholder="输入密码" autocomplete="current-password" style="padding-right:56px">
+        <span id="btnEye" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:12.5px;color:var(--ink3);cursor:pointer;user-select:none">显示</span>
+      </div>
       <div class="hint" id="lgErr" style="color:var(--bad);min-height:16px"></div>
     </div>
+    <button class="btn" id="btnLogin">登 录</button>
+    <div style="display:flex;justify-content:space-between;margin-top:14px">
+      <span id="btnToOtp" style="font-size:13px;color:var(--brand-dk);cursor:pointer">验证码登录</span>
+      <span id="btnToReset" style="font-size:13px;color:var(--ink2);cursor:pointer">忘记密码？</span>
+    </div>
+    <p style="margin-top:16px;font-size:12px;color:var(--ink3);line-height:1.7">首次登录请用「验证码登录」<br>登录后自动开通密码，初始密码 ${DEFAULT_PWD}</p>
+    ` : `
     <div class="f" style="text-align:left">
       <label>验证码</label>
       <div style="display:flex;gap:8px">
         <input id="lgCode" type="tel" inputmode="numeric" maxlength="6" placeholder="6位验证码" style="flex:1">
         <button class="btn ghost" id="btnSendCode" style="width:auto;flex:0 0 auto;padding:10px 14px;margin-top:0;font-size:13.5px">获取验证码</button>
       </div>
+      <div class="hint" id="lgErr" style="color:var(--bad);min-height:16px"></div>
     </div>
-    <button class="btn" id="btnLogin">登录 / 注册</button>
-    <p style="margin-top:18px;font-size:12px;color:var(--ink3)">首次登录自动创建账号<br>登录后团队共享同一份线索库</p>
+    <button class="btn" id="btnLoginOtp">登录 / 注册</button>
+    <div style="text-align:center;margin-top:14px">
+      <span id="btnToPwd" style="font-size:13px;color:var(--brand-dk);cursor:pointer">← 用密码登录</span>
+    </div>
+    <p style="margin-top:16px;font-size:12px;color:var(--ink3);line-height:1.7">首次登录自动创建账号<br>并开通初始密码 ${DEFAULT_PWD}，登录后可在「我的」修改</p>
+    `}
   </div>`;
 }
+
+/* ---- 已查看标记：点进过详情就算"已查看"，存在本机（不写云端，避免污染团队数据） ---- */
+const SEEN_KEY = 'radar_seen_leads';
+const SEEN_FOLD_KEY = 'radar_seen_folded';   // '1' = 折叠收起，'0' = 展开
+
+function seenSet(){
+  try{ return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }catch(_){ return new Set(); }
+}
+function markSeen(id){
+  try{
+    const set = seenSet();
+    const k = String(id);
+    if(set.has(k)) return;
+    set.add(k);
+    // 只保留最近 800 条，避免无限增长
+    const arr = Array.from(set).slice(-800);
+    localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
+  }catch(_){}
+}
+function isSeen(id){ return seenSet().has(String(id)); }
 
 function filteredLeads(){
   let arr = S.leads.slice();
@@ -852,8 +947,42 @@ function leadsView(){
   <div class="tabs">
     ${chips.map(([k,l])=>`<button class="chip ${S.filter===k?'on':''}" data-f="${k}">${l}</button>`).join('')}
   </div>
-  <div class="list">
-    ${arr.length===0?emptyView():arr.map(cardView).join('')}
+  ${leadsListHtml(arr)}`;
+}
+
+/* 列表分两段：未查看（正常显示） + 已查看（可折叠，默认收起，记住上次选择） */
+function leadsListHtml(arr){
+  if(arr.length===0) return `<div class="list">${emptyView()}</div>`;
+
+  const seen = seenSet();
+  const fresh = arr.filter(l=>!seen.has(String(l.id)));
+  const viewed = arr.filter(l=>seen.has(String(l.id)));
+  const folded = localStorage.getItem(SEEN_FOLD_KEY) !== '0';   // 默认折叠
+
+  if(viewed.length===0){
+    return `<div class="list">${fresh.map(cardView).join('')}</div>`;
+  }
+
+  const freshBlock = fresh.length
+    ? `<div class="list">${fresh.map(cardView).join('')}</div>`
+    : `<div class="list"><div class="empty" style="padding:36px 20px">
+         <div class="big">✓</div>
+         <p><b>未查看的都看完了</b></p>
+         <p>${viewed.length} 家已查看的收在下面，点标题可展开</p>
+       </div></div>`;
+
+  return `${freshBlock}
+  <div id="seenFold" style="margin:6px 0 24px">
+    <button id="btnToggleSeen" style="display:flex;align-items:center;gap:8px;width:calc(100% - 32px);margin:0 16px;
+      padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:12px;text-align:left">
+      <span style="font-size:13px;color:var(--ink3);transition:transform .2s;display:inline-block;
+        transform:rotate(${folded?'0deg':'90deg'})">▸</span>
+      <span style="flex:1;font-size:13.5px;font-weight:600;color:var(--ink)">已查看的 ${viewed.length} 家</span>
+      <span style="font-size:12px;color:var(--ink3)">${folded?'展开':'收起'}</span>
+    </button>
+    <div id="seenBody" style="display:${folded?'none':'block'}">
+      <div class="list">${viewed.map(cardView).join('')}</div>
+    </div>
   </div>`;
 }
 
@@ -873,9 +1002,18 @@ function cardView(l){
   const nt = daysFrom(l.next_follow_at);
   let ntTxt='';
   if(l.next_follow_at){
-    if(nt<0) ntTxt=`<span style="color:var(--bad);font-weight:600">已逾期${-nt}天</span>`;
-    else if(nt===0) ntTxt=`<span style="color:var(--brand-dk);font-weight:600">今天要跟</span>`;
-    else ntTxt=`${fmtDate(l.next_follow_at)}跟进`;
+    const dt = parseFollowAt(l.next_follow_at);
+    const when = fmtDateTime(l.next_follow_at);
+    const passed = dt && dt.getTime() <= Date.now();
+    if(passed){
+      ntTxt=`<span style="color:var(--bad);font-weight:600">⏰ ${when} 已到点</span>`;
+    }else if(nt<0){
+      ntTxt=`<span style="color:var(--bad);font-weight:600">已逾期 ${-nt} 天</span>`;
+    }else if(nt===0){
+      ntTxt=`<span style="color:var(--brand-dk);font-weight:600">今天 ${when.split(' ')[1]}</span>`;
+    }else{
+      ntTxt=`${when} 跟进`;
+    }
   }
   return `<div class="card" data-id="${l.id}">
     <div class="card-head">
@@ -1004,7 +1142,10 @@ function meView(){
         display:grid;place-items:center;font-size:26px;margin:0 auto 12px">◎</div>
       <div style="font-size:17px;font-weight:600">${esc(name)}</div>
       <div style="font-size:12.5px;color:var(--ink3);margin-top:4px">${esc(phone||'立丰财税 · 眼镜贸易商拓客')}</div>
-      <button class="btn ghost" id="btnEditName" style="margin-top:14px;padding:8px 18px;font-size:13px">修改用户名</button>
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
+        <button class="btn ghost" id="btnEditName" style="width:auto;padding:8px 16px;font-size:13px;margin:0">修改用户名</button>
+        <button class="btn ghost" id="btnEditPwd" style="width:auto;padding:8px 16px;font-size:13px;margin:0">修改登录密码</button>
+      </div>
     </div>
     <div class="dl">
       <div class="it"><span class="k">线索总数</span><span class="v">${S.leads.length} 条</span></div>
@@ -1039,6 +1180,48 @@ function nameForm(){
     </label>
     <p style="font-size:12px;color:var(--ink3);margin:4px 0 14px">这个名字只影响本机显示，不影响云端登录账号。</p>
     <button class="btn" id="btnSaveName">保存</button>
+  </div>`;
+}
+
+/* 修改登录密码：必须先用当前手机号收验证码，通过后才允许改。
+   验证码的意义是"证明这个手机号在你手上"，比旧密码更可靠（忘了密码也能改）。 */
+function pwdForm(){
+  return `
+  <div class="sheet-h">
+    <h2>修改登录密码</h2>
+    <button class="close" data-close>✕</button>
+  </div>
+  <div class="sheet-b">
+    <div id="pwdStep1">
+      <label class="fld"><span>手机号</span>
+        <input id="pwPhone" type="tel" inputmode="numeric" maxlength="11" placeholder="登录用的手机号">
+      </label>
+      <label class="fld"><span>验证码</span>
+        <div style="display:flex;gap:8px">
+          <input id="pwCode" type="tel" inputmode="numeric" maxlength="6" placeholder="6位验证码" style="flex:1">
+          <button class="btn ghost" id="btnPwSend" style="width:auto;flex:0 0 auto;padding:10px 14px;margin:0;font-size:13.5px">获取验证码</button>
+        </div>
+      </label>
+      <div class="hint" id="pwErr" style="color:var(--bad);min-height:18px;font-size:12.5px"></div>
+      <button class="btn" id="btnPwNext">下一步：设置新密码</button>
+      <p style="font-size:12px;color:var(--ink3);margin:12px 0 0;line-height:1.7">
+        验证码会发送到上面的手机号。没收到请稍等 60 秒再重发。<br>
+        验证通过后才能设置新密码——忘了旧密码也能改。
+      </p>
+    </div>
+    <div id="pwdStep2" style="display:none">
+      <label class="fld" id="pwOldWrap"><span>当前密码</span>
+        <input id="pwOld" type="text" placeholder="没设过密码就留空" autocomplete="off">
+      </label>
+      <label class="fld"><span>新密码</span>
+        <input id="pwNew" type="password" placeholder="至少 6 位，建议字母+数字" autocomplete="new-password">
+      </label>
+      <label class="fld"><span>再输一次</span>
+        <input id="pwNew2" type="password" placeholder="确认新密码" autocomplete="new-password">
+      </label>
+      <div class="hint" id="pwErr2" style="color:var(--bad);min-height:18px;font-size:12.5px"></div>
+      <button class="btn" id="btnPwSave">保存新密码</button>
+    </div>
   </div>`;
 }
 
@@ -1097,8 +1280,8 @@ function leadForm(l={}, prefillArea=''){
     <div class="row2">
       <div class="f"><label>跟进状态</label>
         <select id="f_status">${STATUSES.map(s=>`<option ${l.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
-      <div class="f"><label>下次跟进</label>
-        <input id="f_next" type="date" value="${l.next_follow_at||''}"></div>
+      <div class="f"><label>下次跟进（可到点提醒）</label>
+        <input id="f_next" type="datetime-local" value="${toLocalInput(l.next_follow_at)}"></div>
     </div>
     <div class="f"><label>信息来源 / 备注</label>
       <textarea id="f_source" placeholder="店铺链接、工商登记来源、核实说明">${esc(l.source||'')}</textarea></div>
@@ -1182,7 +1365,7 @@ function detailSheet(l){
       ${l.demand_signal?`<div class="it"><span class="k">需求信号</span><span class="v">${esc(l.demand_signal)}</span></div>`:''}
       ${l.area?`<div class="it"><span class="k">地址</span><span class="v">${esc(l.area)}</span></div>`:''}
       <div class="it"><span class="k">状态</span><span class="v">${esc(l.status||'待跟进')}</span></div>
-      ${l.next_follow_at?`<div class="it"><span class="k">下次跟进</span><span class="v">${fmtDate(l.next_follow_at)}</span></div>`:''}
+      ${l.next_follow_at?`<div class="it"><span class="k">下次跟进</span><span class="v">${fmtDateTime(l.next_follow_at)}</span></div>`:''}
       ${l.source?`<div class="it"><span class="k">来源</span><span class="v" style="font-size:12.5px;color:var(--ink2)">${esc(l.source)}</span></div>`:''}
     </div>
 
@@ -1215,7 +1398,7 @@ function detailSheet(l){
         <div class="f"><select id="fuChannel">
           <option>电话</option><option>微信</option><option>面谈</option><option>上门</option><option>其他</option>
         </select></div>
-        <div class="f"><input id="fuNext" type="date"></div>
+        <div class="f"><input id="fuNext" type="datetime-local" title="下次跟进时间（可精确到分钟）"></div>
       </div>
       <button class="btn ghost" id="btnAddFu" style="font-size:13.5px;padding:10px">保存跟进 + 设下次提醒</button>
     </div>
@@ -1257,6 +1440,95 @@ document.addEventListener('click', async (e)=>{
 
   if(t.closest('#clr')){ S.q=''; render(); return; }
 
+  // 提醒弹窗：知道了 / 稍后
+  if(t.closest('#btnRemindOk')){ closeSheet(); return; }
+  if(t.closest('#btnRemindLater')){
+    // 10 分钟后再提醒：把当前已标记的"已提醒"临时撤回
+    const set = remindedSet();
+    const list = (S.leads||[]).filter(l=>l.next_follow_at);
+    closeSheet();
+    toast('10 分钟后再提醒你');
+    setTimeout(()=>{
+      const s2 = remindedSet();
+      list.forEach(l=>{
+        const k = `${l.id}|${l.next_follow_at}`;
+        const t2 = parseFollowAt(l.next_follow_at);
+        if(t2 && Date.now() - t2.getTime() < 3*86400000) s2.delete(k);
+      });
+      saveReminded(s2);
+      checkReminders(false);
+    }, 10*60*1000);
+    return;
+  }
+  // 从提醒弹窗直接去某条的详情
+  const ro = t.closest('[data-remind-open]');
+  if(ro){
+    const id = ro.dataset.remindOpen;
+    const lead = S.leads.find(x=>String(x.id)===String(id));
+    if(lead){ closeSheet(); setTimeout(()=>openDetail(lead), 250); }
+    return;
+  }
+
+  // 已查看区 展开 / 收起（记住选择）
+  if(t.closest('#btnToggleSeen')){
+    const body=$('#seenBody'), arrow=t.closest('#btnToggleSeen')?.querySelector('span'),
+          label=t.closest('#btnToggleSeen')?.querySelector('span:last-child');
+    const collapsed = body && body.style.display === 'none';
+    if(body) body.style.display = collapsed ? 'block' : 'none';
+    if(arrow) arrow.style.transform = collapsed ? 'rotate(90deg)' : 'rotate(0deg)';
+    if(label) label.textContent = collapsed ? '收起' : '展开';
+    try{ localStorage.setItem(SEEN_FOLD_KEY, collapsed ? '0' : '1'); }catch(_){}
+    return;
+  }
+
+  // 登录方式切换
+  if(t.closest('#btnToOtp')){ S.loginMode='otp'; render(); return; }
+  if(t.closest('#btnToPwd')){ S.loginMode='pwd'; render(); return; }
+  if(t.closest('#btnToReset')){
+    S.loginMode='otp'; render();
+    setTimeout(()=>toast('用验证码登录后，可在「我的」里重设密码', 2600), 120);
+    return;
+  }
+  // 显示 / 隐藏密码
+  if(t.closest('#btnEye')){
+    const inp=$('#lgPwd'); if(!inp) return;
+    const show = inp.type==='password';
+    inp.type = show ? 'text' : 'password';
+    t.closest('#btnEye').textContent = show ? '隐藏' : '显示';
+    return;
+  }
+
+  // 密码登录
+  if(t.closest('#btnLogin')){
+    const phone=($('#lgPhone')?.value||'').trim();
+    const pwd=($('#lgPwd')?.value||'');
+    const err=$('#lgErr');
+    if(err) err.textContent='';
+    if(!/^1\d{10}$/.test(phone)){ if(err) err.textContent='请输入正确的 11 位手机号'; return; }
+    if(!pwd){ if(err) err.textContent='请输入密码'; return; }
+    const btn=t.closest('#btnLogin');
+    const old=btn.textContent;
+    btn.disabled=true; btn.textContent='登录中…';
+    try{
+      const r=await cloud.auth.signInWithPassword({phone, password:pwd});
+      if(r.error){
+        const msg = r.error.message||'';
+        if(err) err.textContent = /incorrect|invalid_username/i.test(msg)
+          ? '手机号或密码不对。首次使用请点「验证码登录」'
+          : msg;
+        btn.disabled=false; btn.textContent=old;
+        return;
+      }
+      S.session=r.data?.session||r.data||await cloud.auth.getSession();
+      if(S.session && S.session.user===undefined && S.session.session) S.session=S.session.session;
+      await refresh();
+    }catch(e){
+      if(err) err.textContent=e.message||'登录失败';
+      btn.disabled=false; btn.textContent=old;
+    }
+    return;
+  }
+
   // login
   if(t.closest('#btnSendCode')){
     const phone=($('#lgPhone')?.value||'').trim();
@@ -1283,7 +1555,7 @@ document.addEventListener('click', async (e)=>{
     }
     return;
   }
-  if(t.closest('#btnLogin')){
+  if(t.closest('#btnLoginOtp')){
     const phone=($('#lgPhone')?.value||'').trim();
     const code=($('#lgCode')?.value||'').trim();
     const err=$('#lgErr');
@@ -1291,14 +1563,17 @@ document.addEventListener('click', async (e)=>{
     if(!PENDING_OTP || PENDING_OTP.phone!==phone){ if(err) err.textContent='请先获取验证码'; return; }
     if(!/^\d{4,6}$/.test(code)){ if(err) err.textContent='请输入收到的验证码'; return; }
     if(err) err.textContent='';
-    const btn=t.closest('#btnLogin');
+    const btn=t.closest('#btnLoginOtp');
     btn.disabled=true; btn.textContent='登录中…';
+    const isNew = PENDING_OTP.isExistingUser === false;
     try{
+      // password 传给 verifyOtp：新用户注册时一并写入初始密码；老用户忽略这个字段
       const r=await cloud.auth.verifyOtp({
         phone: PENDING_OTP.phone,
         verificationId: PENDING_OTP.verificationId,
         isExistingUser: PENDING_OTP.isExistingUser,
         token: code,
+        password: DEFAULT_PWD,
       });
       if(r.error){
         if(err) err.textContent=r.error.message||'验证码错误';
@@ -1308,6 +1583,10 @@ document.addEventListener('click', async (e)=>{
       PENDING_OTP=null;
       S.session=r.data?.session||r.data||await cloud.auth.getSession();
       if(S.session && S.session.user===undefined && S.session.session) S.session=S.session.session;
+      S.loginMode='pwd';
+      toast(isNew ? `账号已创建，初始密码 ${DEFAULT_PWD}` : '登录成功');
+      // 老用户（验证码注册、从未设过密码）在这里补一个默认密码，下次可直接用密码登录
+      if(!isNew) ensureDefaultPassword(phone);
       await refresh();
     }catch(e){
       if(err) err.textContent=e.message||'登录失败';
@@ -1556,6 +1835,122 @@ document.addEventListener('click', async (e)=>{
     return;
   }
 
+  // 修改登录密码
+  if(t.closest('#btnEditPwd')){
+    PWD_FLOW = { phone:'', verificationId:null, token:null };
+    openSheet(pwdForm());
+    const inp=$('#pwPhone');
+    if(inp) inp.value = (S.session?.user?.phone || '').replace(/^\+?86/,'');
+    return;
+  }
+
+  // 发送验证码（改密流程）
+  if(t.closest('#btnPwSend')){
+    const phone=($('#pwPhone')?.value||'').trim();
+    const err=$('#pwErr');
+    if(!/^1\d{10}$/.test(phone)){ if(err) err.textContent='请输入正确的 11 位手机号'; return; }
+    if(err) err.textContent='';
+    const btn=t.closest('#btnPwSend');
+    btn.disabled=true; btn.textContent='发送中…';
+    try{
+      const sent=await cloud.auth.sendOtp({phone});
+      if(sent.error){ if(err) err.textContent=sent.error.message||'发送失败'; btn.disabled=false; btn.textContent='获取验证码'; return; }
+      PWD_FLOW.phone = phone;
+      PWD_FLOW.verificationId = sent.data.verificationId;
+      PWD_FLOW.isExistingUser = sent.data.isExistingUser;
+      toast('验证码已发送');
+      let n=60; btn.textContent=`${n}s 后重发`;
+      clearInterval(btn._t);
+      btn._t=setInterval(()=>{
+        n--;
+        if(n<=0){ clearInterval(btn._t); btn.disabled=false; btn.textContent='重新获取'; }
+        else btn.textContent=`${n}s 后重发`;
+      },1000);
+    }catch(e){
+      if(err) err.textContent=e.message||'发送失败';
+      btn.disabled=false; btn.textContent='获取验证码';
+    }
+    return;
+  }
+
+  // 下一步：校验验证码，进第二步
+  if(t.closest('#btnPwNext')){
+    const code=($('#pwCode')?.value||'').trim();
+    const err=$('#pwErr');
+    if(!PWD_FLOW.verificationId){ if(err) err.textContent='请先获取验证码'; return; }
+    if(!/^\d{4,6}$/.test(code)){ if(err) err.textContent='请输入收到的验证码'; return; }
+    if(err) err.textContent='';
+    const btn=t.closest('#btnPwNext');
+    btn.disabled=true; btn.textContent='验证中…';
+    try{
+      // 只校验验证码，不登录、不注册：拿到一次性 verification_token
+      const v=await cloud.auth.verifyOtp({
+        phone: PWD_FLOW.phone,
+        verificationId: PWD_FLOW.verificationId,
+        isExistingUser: PWD_FLOW.isExistingUser,
+        token: code,
+      });
+      if(v.error){
+        if(err) err.textContent=/match|无效/i.test(v.error.message||'') ? '验证码不对，请重新输入' : (v.error.message||'验证失败');
+        btn.disabled=false; btn.textContent='下一步：设置新密码';
+        return;
+      }
+      // isExistingUser=true 时 verifyOtp 会直接完成登录并写入会话，
+      // 这样后面的 sudo / 改密就有合法 token 了
+      PWD_FLOW.token = code;
+      PWD_FLOW.verified = true;
+      if(v.data && (v.data.session || v.data.accessToken || v.data.user)){
+        S.session = v.data.session || v.data;
+      }
+      const fresh = await cloud.auth.getSession().catch(()=>null);
+      if(fresh && fresh.data && fresh.data.user){
+        S.session = fresh.data;
+        PWD_FLOW.phoneVerified = true;
+      }
+      $('#pwdStep1').style.display='none';
+      $('#pwdStep2').style.display='';
+    }catch(e){
+      if(err) err.textContent=e.message||'验证失败';
+      btn.disabled=false; btn.textContent='下一步：设置新密码';
+    }
+    return;
+  }
+
+  // 保存新密码
+  if(t.closest('#btnPwSave')){
+    const p1=($('#pwNew')?.value||'').trim();
+    const p2=($('#pwNew2')?.value||'').trim();
+    const err=$('#pwErr2');
+    if(p1.length<6){ if(err) err.textContent='密码至少 6 位'; return; }
+    if(p1!==p2){ if(err) err.textContent='两次输入不一致'; return; }
+    if(err) err.textContent='';
+    const btn=t.closest('#btnPwSave');
+    btn.disabled=true; btn.textContent='保存中…';
+    try{
+      const oldPwd = ($('#pwOld')?.value||'').trim();
+      const r=await cloud.auth.resetPasswordForOld({
+        oldPassword: oldPwd,
+        newPassword: p1,
+      });
+      if(r && r.error){
+        const m = r.error.message||'';
+        if(err) err.textContent = /incorrect|invalid_username|password/i.test(m)
+          ? '当前密码不对。没设过密码请留空；设过但忘了，可用「验证码登录」进来后再改'
+          : '修改失败：'+m;
+        btn.disabled=false; btn.textContent='保存新密码';
+        return;
+      }
+      toast('登录密码已更新');
+      PWD_FLOW = null;
+      closeSheet();
+      render();
+    }catch(e){
+      if(err) err.textContent='修改失败：'+(e.message||'');
+      btn.disabled=false; btn.textContent='保存新密码';
+    }
+    return;
+  }
+
   // 修改用户名
   if(t.closest('#btnEditName')){
     openSheet(nameForm());
@@ -1644,6 +2039,8 @@ function curLead(){
 
 function openDetail(l, checks){
   S.current = (l && typeof l === 'object') ? l : (S.leads.find(x=>String(x.id)===String(l)) || null);
+  // 点进详情即视为"已查看"，下次回到线索库它会落到折叠区
+  if(S.current && S.current.id != null) markSeen(S.current.id);
   openSheet(detailSheet(l));
   if(checks){
     const box=document.querySelector('.score-box');
@@ -1692,7 +2089,7 @@ async function bootSession(){
    APK 里的网页是打包进去的，改完线上网页不会自动进到 App 里。
    这里在 App 壳内启动时读一次线上的 version.json，与自身版本比对，
    发现更新就提示用户。网页版不需要这个逻辑（网页本身永远是最新的）。 */
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 async function checkAppUpdate(){
   if(window.APP_ENV !== 'native') return;         // 只在 App 壳内检查
@@ -1738,6 +2135,115 @@ function showUpdateBar(remote){
   };
 }
 
+/* ============================================================
+   到点提醒：每分钟检查一次「下次跟进」，到点弹窗 + 响铃
+   ------------------------------------------------------------
+   · 只提醒还没提醒过的（按 id+时间 组合去重）
+   · 网页后台标签页会被浏览器降频，所以每 20 秒检查，并且页面重新可见时补一次检查
+   · 铃声用 Web Audio 现场合成，不依赖音频文件，离线 APK 也能响
+   ============================================================ */
+const REMINDED_KEY = 'radar_reminded';
+let REMIND_TIMER = null;
+
+function remindedSet(){
+  try{ return new Set(JSON.parse(localStorage.getItem(REMINDED_KEY)||'[]')); }catch(_){ return new Set(); }
+}
+function saveReminded(set){
+  try{ localStorage.setItem(REMINDED_KEY, JSON.stringify(Array.from(set).slice(-1500))); }catch(_){}
+}
+
+/* 三声"叮咚"，用振荡器合成，避免携带音频文件 */
+function playChime(times=2){
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    if(!playChime._ctx) playChime._ctx = new AC();
+    const ctx = playChime._ctx;
+    if(ctx.state === 'suspended') ctx.resume();
+    const now = ctx.currentTime;
+    for(let i=0;i<times;i++){
+      [880, 1174.7].forEach((freq, k)=>{
+        const t0 = now + i*0.62 + k*0.18;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t0);
+        gain.gain.setValueAtTime(0, t0);
+        gain.gain.linearRampToValueAtTime(0.22, t0+0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0+0.42);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(t0); osc.stop(t0+0.45);
+      });
+    }
+  }catch(e){ console.warn('提示音播放失败（需先与页面交互一次）', e); }
+}
+
+function remindPopup(list){
+  const items = list.map(l=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)">
+      <span style="width:6px;height:6px;border-radius:50%;background:var(--brand);flex:0 0 auto"></span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.company||l.shop_name||'未命名')}</div>
+        <div style="font-size:12px;color:var(--ink3);margin-top:2px">
+          ${esc(fmtDateTime(l.next_follow_at))}${l.phone?` · ${esc(l.phone)}`:''}
+        </div>
+      </div>
+      <button class="mini" data-remind-open="${l.id}" style="flex:0 0 auto">去跟进</button>
+    </div>`).join('');
+
+  const html = `
+  <div class="sheet-h">
+    <h2>⏰ 该跟进了</h2>
+    <button class="close" data-close>✕</button>
+  </div>
+  <div class="sheet-b">
+    <div style="background:var(--brand-lt);border-radius:12px;padding:12px 14px;margin-bottom:6px;font-size:13px;color:var(--brand-dk)">
+      有 ${list.length} 条线索到了约定的跟进时间
+    </div>
+    ${items}
+    <div style="height:14px"></div>
+    <button class="btn" id="btnRemindLater">稍后再提醒（10 分钟）</button>
+    <button class="btn ghost" id="btnRemindOk" style="margin-top:8px">知道了</button>
+  </div>`;
+  openSheet(html);
+  playChime(2);
+  if(navigator.vibrate) try{ navigator.vibrate([120,80,120]); }catch(_){}
+}
+
+function dueLeads(){
+  const now = Date.now();
+  const done = remindedSet();
+  return S.leads.filter(l=>{
+    if(!l.next_follow_at) return false;
+    const t = parseFollowAt(l.next_follow_at);
+    if(!t) return false;
+    // 到点即提醒；超过 3 天的不再打扰
+    if(t.getTime() > now) return false;
+    if(now - t.getTime() > 3*86400000) return false;
+    return !done.has(`${l.id}|${l.next_follow_at}`);
+  });
+}
+
+function checkReminders(force){
+  if(!S.session) return;
+  if(S.leads.length===0) return;
+  const list = dueLeads();
+  if(list.length===0) return;
+  // 正在编辑/已打开弹窗时不打断
+  const sheetOn = $('#sheet') && $('#sheet').classList.contains('on');
+  if(sheetOn && !force) return;
+  const set = remindedSet();
+  list.forEach(l=>set.add(`${l.id}|${l.next_follow_at}`));
+  saveReminded(set);
+  remindPopup(list);
+}
+
+function startReminders(){
+  if(REMIND_TIMER) clearInterval(REMIND_TIMER);
+  REMIND_TIMER = setInterval(()=>checkReminders(false), 20000);
+  setTimeout(()=>checkReminders(false), 3000);
+}
+
 (function boot(){
   // 首屏渲染绝不允许把整页搞白：出错就回退到登录页/错误提示
   try{ render(); }
@@ -1776,6 +2282,7 @@ function showUpdateBar(remote){
     try{ await ensureModel(); }catch(_){}
     // 检查更新（非阻塞）
     checkAppUpdate();
+    startReminders();
   })();
 })();
 
