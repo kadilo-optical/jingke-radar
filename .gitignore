@@ -1,0 +1,22 @@
+# 依赖与构建产物
+node_modules/
+www/
+android/
+dist/
+build/
+
+# 本地临时文件
+.tmp/
+*.log
+
+# 工具内部数据（含业务名单等，不进仓库）
+.workbuddy/
+*.genie
+
+# 业务数据台账：含客户名称与联系电话，严禁进公开仓库
+已收录名单.md
+*.md.bak
+
+# 系统文件
+.DS_Store
+Thumbs.db

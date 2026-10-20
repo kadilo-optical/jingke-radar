@@ -1,0 +1,14 @@
+{
+  "appId": "com.kadilo.jingkeradar",
+  "appName": "镜客雷达",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

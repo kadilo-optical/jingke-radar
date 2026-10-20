@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#C4562A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="镜客雷达">
+<title>镜客雷达 · 眼镜贸易商拓客</title>
+<style>
+:root{
+  --brand:#C4562A; --brand-dk:#9E4320; --brand-lt:#FBEEE7;
+  --bg:#F7F4F0; --card:#FFFFFF; --ink:#23201D; --ink2:#6B635B; --ink3:#9A9188;
+  --line:#E8E1D9; --ok:#2E7D4F; --warn:#B8860B; --bad:#B23B3B;
+  --r:14px; --sh:0 1px 3px rgba(35,32,29,.06),0 6px 18px rgba(35,32,29,.05);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--ink);font-size:15px;line-height:1.55;
+  padding-bottom:calc(72px + env(safe-area-inset-bottom));
+  overscroll-behavior-y:contain;
+}
+button,input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
+button{cursor:pointer;border:none;background:none;padding:0}
+
+/* ---------- top bar ---------- */
+.top{
+  position:sticky;top:0;z-index:40;background:var(--brand);
+  padding:calc(10px + env(safe-area-inset-top)) 16px 12px;color:#fff;
+  box-shadow:0 2px 12px rgba(158,67,32,.22);
+}
+.top-row{display:flex;align-items:center;gap:10px}
+.logo{
+  width:32px;height:32px;border-radius:10px;background:rgba(255,255,255,.18);
+  display:grid;place-items:center;font-size:17px;flex:0 0 auto;
+}
+.top h1{font-size:17px;margin:0;font-weight:600;letter-spacing:.5px;flex:1}
+.top .sub{font-size:11.5px;opacity:.82;margin-top:1px;font-weight:400}
+.iconbtn{
+  width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.16);
+  display:grid;place-items:center;font-size:16px;color:#fff;flex:0 0 auto;
+}
+.iconbtn:active{background:rgba(255,255,255,.3)}
+
+/* ---------- search ---------- */
+.searchwrap{padding:12px 16px 4px;position:sticky;top:calc(52px + env(safe-area-inset-top));z-index:30;background:var(--bg)}
+.search{
+  display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);
+  border-radius:12px;padding:9px 12px;box-shadow:var(--sh);
+}
+.search input{border:none;outline:none;flex:1;background:transparent;font-size:14.5px}
+.search input::placeholder{color:var(--ink3)}
+
+/* ---------- tabs ---------- */
+.tabs{
+  display:flex;gap:6px;overflow-x:auto;padding:10px 16px 6px;scrollbar-width:none;
+}
+.tabs::-webkit-scrollbar{display:none}
+.chip{
+  flex:0 0 auto;padding:6px 13px;border-radius:999px;background:var(--card);
+  border:1px solid var(--line);font-size:13px;color:var(--ink2);white-space:nowrap;
+}
+.chip.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:500}
+
+/* ---------- list ---------- */
+.list{padding:4px 16px 16px;display:flex;flex-direction:column;gap:10px}
+.card{
+  background:var(--card);border-radius:var(--r);padding:13px 14px;box-shadow:var(--sh);
+  border:1px solid rgba(232,225,217,.7);position:relative;
+}
+.card:active{transform:scale(.995)}
+.card-head{display:flex;align-items:flex-start;gap:8px}
+.co{font-size:15.5px;font-weight:600;line-height:1.4;flex:1;word-break:break-all}
+.badge{
+  flex:0 0 auto;font-size:11px;padding:2px 7px;border-radius:6px;font-weight:600;
+  background:var(--brand-lt);color:var(--brand-dk);
+}
+.badge.A{background:#FCE8E0;color:#A83F17}
+.badge.B{background:#FBF1DC;color:#8A6108}
+.badge.C{background:#EEEAE4;color:#6B635B}
+.meta{display:flex;flex-wrap:wrap;gap:5px 10px;margin-top:7px;font-size:12.5px;color:var(--ink2)}
+.meta span{display:inline-flex;align-items:center;gap:3px}
+.meta i{font-style:normal;opacity:.65;font-size:11.5px}
+.phone-row{
+  margin-top:9px;padding-top:9px;border-top:1px dashed var(--line);
+  display:flex;align-items:center;gap:8px;font-size:13.5px;
+}
+.phone-row .num{color:var(--brand-dk);font-weight:600;letter-spacing:.4px}
+.phone-row .none{color:var(--ink3);font-size:12.5px}
+.act{margin-left:auto;display:flex;gap:6px}
+.mini{
+  font-size:12px;padding:4px 10px;border-radius:8px;background:var(--brand-lt);
+  color:var(--brand-dk);font-weight:500;
+}
+.mini.ghost{background:#F2EEE9;color:var(--ink2)}
+.stbar{margin-top:10px;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink3)}
+.stbar .bar{flex:1;height:4px;border-radius:2px;background:#EFEAE3;overflow:hidden}
+.stbar .bar i{display:block;height:100%;background:var(--brand);border-radius:2px}
+
+/* ---------- empty ---------- */
+.empty{text-align:center;padding:56px 24px;color:var(--ink3)}
+.empty .big{font-size:40px;margin-bottom:10px;opacity:.5}
+.empty p{margin:6px 0;font-size:13.5px}
+
+/* ---------- fab ---------- */
+.fab{
+  position:fixed;right:18px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:50;
+  width:54px;height:54px;border-radius:18px;background:var(--brand);color:#fff;
+  display:grid;place-items:center;font-size:26px;box-shadow:0 6px 20px rgba(158,67,32,.38);
+}
+.fab:active{transform:scale(.94)}
+
+/* ---------- bottom nav ---------- */
+.nav{
+  position:fixed;left:0;right:0;bottom:0;z-index:45;background:rgba(255,255,255,.96);
+  backdrop-filter:blur(12px);border-top:1px solid var(--line);
+  display:flex;padding:6px 0 calc(6px + env(safe-area-inset-bottom));
+}
+.nav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--ink3);font-size:10.5px;padding:3px 0}
+.nav button .ic{font-size:19px;line-height:1.2}
+.nav button.on{color:var(--brand)}
+
+/* ---------- sheet ---------- */
+.mask{
+  position:fixed;inset:0;background:rgba(35,32,29,.42);z-index:60;
+  opacity:0;pointer-events:none;transition:opacity .22s;
+}
+.mask.on{opacity:1;pointer-events:auto}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:61;background:var(--bg);
+  border-radius:20px 20px 0 0;max-height:92vh;overflow-y:auto;
+  transform:translateY(100%);transition:transform .26s cubic-bezier(.32,.72,0,1);
+  padding-bottom:calc(16px + env(safe-area-inset-bottom));
+}
+.sheet.on{transform:translateY(0)}
+.sheet-h{
+  position:sticky;top:0;background:var(--bg);z-index:2;padding:14px 16px 10px;
+  display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);
+}
+.sheet-h h2{margin:0;font-size:16px;font-weight:600;flex:1}
+.close{width:30px;height:30px;border-radius:50%;background:#EDE7E0;display:grid;place-items:center;font-size:15px;color:var(--ink2)}
+.sheet-body{padding:14px 16px 0}
+
+/* ---------- form ---------- */
+.f{margin-bottom:12px}
+.f label{display:block;font-size:12.5px;color:var(--ink2);margin-bottom:5px;font-weight:500}
+.f label .req{color:var(--bad);margin-left:2px}
+.f input,.f textarea,.f select{
+  width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;
+  background:var(--card);outline:none;font-size:14.5px;
+}
+.f textarea{resize:vertical;min-height:64px;line-height:1.5}
+.f input:focus,.f textarea:focus,.f select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(196,86,42,.1)}
+.f .hint{font-size:11.5px;color:var(--ink3);margin-top:4px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+.btn{
+  width:100%;padding:13px;border-radius:12px;background:var(--brand);color:#fff;
+  font-weight:600;font-size:15px;margin-top:6px;
+}
+.btn:active{background:var(--brand-dk)}
+.btn.ghost{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+.btn.ai{background:linear-gradient(135deg,#C4562A,#D97B4F)}
+.btn:disabled{opacity:.55}
+.btn-row{display:flex;gap:10px}
+.btn-row .btn{margin-top:6px}
+
+/* ---------- detail ---------- */
+.dl{background:var(--card);border-radius:var(--r);padding:4px 14px;box-shadow:var(--sh);margin-bottom:12px}
+.dl .it{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}
+.dl .it:last-child{border-bottom:none}
+.dl .k{color:var(--ink3);font-size:13px;flex:0 0 74px}
+.dl .v{flex:1;word-break:break-all;line-height:1.5}
+.dl .v.mono{font-weight:600;letter-spacing:.4px;color:var(--brand-dk)}
+.copy{font-size:11.5px;color:var(--brand);margin-left:6px;font-weight:500}
+
+/* ---------- score ---------- */
+.score-box{background:var(--card);border-radius:var(--r);padding:14px;box-shadow:var(--sh);margin-bottom:12px}
+.score-top{display:flex;align-items:center;gap:14px}
+.ring{width:66px;height:66px;flex:0 0 auto;position:relative}
+.ring svg{transform:rotate(-90deg)}
+.ring .n{position:absolute;inset:0;display:grid;place-items:center;font-size:19px;font-weight:700;color:var(--brand-dk)}
+.score-txt{flex:1}
+.score-txt h3{margin:0 0 3px;font-size:15px}
+.score-txt p{margin:0;font-size:12.5px;color:var(--ink2);line-height:1.5}
+.checks{margin-top:12px;display:flex;flex-direction:column;gap:7px}
+.ck{display:flex;gap:8px;font-size:13px;line-height:1.5}
+.ck .dot{flex:0 0 auto;width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:10px;color:#fff;margin-top:1px}
+.ck .dot.p{background:var(--ok)} .ck .dot.f{background:var(--bad)} .ck .dot.u{background:var(--warn)}
+.ck .t{flex:1;color:var(--ink2)}
+.ck .t b{color:var(--ink);font-weight:600}
+
+/* ---------- script ---------- */
+.script-box{background:var(--card);border-radius:var(--r);padding:14px;box-shadow:var(--sh);margin-bottom:12px}
+.script-box h3{margin:0 0 8px;font-size:14px;color:var(--brand-dk);display:flex;align-items:center;gap:6px}
+.script-box pre{
+  margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;
+  font-size:13.5px;line-height:1.75;color:var(--ink);
+}
+.script-box .copybtn{margin-top:10px;font-size:12.5px;color:var(--brand);font-weight:500}
+
+/* ---------- toast ---------- */
+.toast{
+  position:fixed;left:50%;bottom:50%;transform:translate(-50%,0);z-index:99;
+  background:rgba(35,32,29,.9);color:#fff;padding:10px 18px;border-radius:12px;
+  font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .2s;max-width:80vw;text-align:center;
+}
+.toast.on{opacity:1}
+
+/* ---------- login ---------- */
+.login{padding:60px 28px;text-align:center}
+.login .ic{font-size:52px;margin-bottom:16px}
+.login h2{margin:0 0 8px;font-size:19px}
+.login p{margin:0 0 24px;color:var(--ink2);font-size:13.5px;line-height:1.6}
+
+/* ---------- loading ---------- */
+.loading{padding:44px;text-align:center;color:var(--ink3);font-size:13px}
+.spin{width:22px;height:22px;border:2.5px solid var(--line);border-top-color:var(--brand);border-radius:50%;margin:0 auto 10px;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ---------- stat ---------- */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 16px 2px}
+.stat{background:var(--card);border-radius:12px;padding:10px 6px;text-align:center;box-shadow:var(--sh)}
+.stat .n{font-size:19px;font-weight:700;color:var(--brand-dk);line-height:1.2}
+.stat .l{font-size:10.5px;color:var(--ink3);margin-top:2px}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-row">
+    <div class="logo">◎</div>
+    <div style="flex:1">
+      <h1>镜客雷达</h1>
+      <div class="sub" id="topSub">眼镜贸易商精准拓客</div>
+    </div>
+    <button class="iconbtn" id="btnUser" title="账号">👤</button>
+  </div>
+</header>
+
+<div id="app"></div>
+
+<nav class="nav" id="nav">
+  <button data-tab="leads" class="on"><span class="ic">▤</span>线索库</button>
+  <button data-tab="todo"><span class="ic">◷</span>待跟进</button>
+  <button data-tab="stats"><span class="ic">▦</span>看板</button>
+  <button data-tab="me"><span class="ic">☰</span>我的</button>
+</nav>
+
+<button class="fab" id="fab">+</button>
+
+<div class="mask" id="mask"></div>
+<div class="sheet" id="sheet"></div>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js" crossorigin="anonymous"></script>
+<script src="/public-config.js"></script>
+<script>
+/* ============================================================
+   镜客雷达 — 眼镜贸易商精准拓客
+   ============================================================ */
+
+// 启动前先确认依赖已就位，否则给出人话提示而非白屏
+if(typeof WorkBuddyCloud === 'undefined' || !window.PUBLIC_CONFIG){
+  document.body.innerHTML = '<div style="padding:40px 24px;font-family:-apple-system,sans-serif;line-height:1.7;color:#23201D">'
+    + '<h2 style="color:#C4562A;font-size:18px">加载失败了</h2>'
+    + '<p>页面依赖的云端组件没能加载出来，通常是网络问题。</p>'
+    + '<p style="color:#6B635B;font-size:14px">请检查网络后刷新；如果一直不行，可能是当前浏览器拦截了外部脚本。</p>'
+    + '<button onclick="location.reload()" style="margin-top:16px;padding:12px 24px;background:#C4562A;color:#fff;border:none;border-radius:10px;font-size:15px">重新加载</button>'
+    + '</div>';
+  throw new Error('依赖未就绪');
+}
+
+const cloud = WorkBuddyCloud.createWorkBuddyCloud({
+  endpoint: window.PUBLIC_CONFIG.endpoint,
+  oauthRelayBaseUrl: window.PUBLIC_CONFIG.oauthRelayBaseUrl,
+  publishableKey: window.PUBLIC_CONFIG.publishableKey,
+});
+
+/* ---------- state ---------- */
+const S = {
+  leads: [],
+  followups: [],
+  tab: 'leads',
+  filter: 'all',
+  q: '',
+  session: null,
+  model: null,
+  loading: false,
+  editing: null,   // lead object being edited
+  current: null,   // lead object open in detail
+};
+
+const GRADES = ['A','B','C'];
+let PENDING_OTP = null;   // { phone, verificationId, isExistingUser }
+const STATUSES = ['待跟进','已联系','已加微信','已报价','意向','已成交','暂搁置','无效'];
+const PLATFORMS = ['Shein','Temu','TikTok','阿里国际站','1688','淘宝/天猫','拼多多','抖音','速卖通','亚马逊','义乌购','线下档口'];
+
+/* ---------- utils ---------- */
+const $ = (s,r=document)=>r.querySelector(s);
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg,ms=1900){
+  const t=$('#toast'); t.textContent=msg; t.classList.add('on');
+  clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('on'),ms);
+}
+function fmtDate(d){
+  if(!d) return '';
+  const t=new Date(d); if(isNaN(t)) return d;
+  return `${t.getMonth()+1}月${t.getDate()}日`;
+}
+function daysFrom(d){
+  if(!d) return null;
+  const a=new Date(d); a.setHours(0,0,0,0);
+  const b=new Date(); b.setHours(0,0,0,0);
+  return Math.round((a-b)/86400000);
+}
+function todayStr(){
+  const d=new Date(); const p=n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+}
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+
+/* ============================================================
+   CLOUD DATA
+   ============================================================ */
+
+async function loadLeads(){
+  const { data, error } = await cloud.database
+    .from('leads').select('*').order('created_at',{ascending:false});
+  if(error) throw error;
+  S.leads = data || [];
+}
+
+async function loadFollowups(){
+  const { data, error } = await cloud.database
+    .from('followups').select('*').order('created_at',{ascending:false}).limit(500);
+  if(error){ S.followups=[]; return; }
+  S.followups = data || [];
+}
+
+async function refresh(){
+  S.loading = true; render();
+  try{
+    await Promise.all([loadLeads(), loadFollowups()]);
+  }catch(e){
+    console.error(e);
+    toast('数据加载失败：'+(e.message||'网络错误'));
+  }finally{
+    S.loading = false; render();
+  }
+}
+
+async function saveLead(payload, id){
+  if(id){
+    const { data, error } = await cloud.database
+      .from('leads').update({...payload, updated_at:new Date().toISOString()})
+      .eq('id',id).select();
+    if(error) throw error;
+    if(!data || data.length===0) throw new Error('没有更新到任何记录（可能无权限或记录已删除）');
+    return data[0];
+  }else{
+    const { data, error } = await cloud.database
+      .from('leads').insert(payload).select();
+    if(error) throw error;
+    return data[0];
+  }
+}
+
+async function delLead(id){
+  const { data, error } = await cloud.database.from('leads').delete().eq('id',id).select();
+  if(error) throw error;
+  if(!data || data.length===0) throw new Error('删除失败（可能无权限）');
+}
+
+async function addFollowup(leadId, content, channel, nextAt){
+  const { error } = await cloud.database.from('followups').insert({
+    lead_id: leadId, content, channel: channel||'电话',
+    next_at: nextAt||null,
+    owner_name: S.session?.user?.name || null,
+  });
+  if(error) throw error;
+  if(nextAt){
+    await cloud.database.from('leads')
+      .update({ next_follow_at: nextAt, updated_at:new Date().toISOString() })
+      .eq('id',leadId);
+  }
+}
+
+/* ============================================================
+   AI — 合格度打分 + 话术生成
+   ============================================================ */
+
+// 打分/话术属于"短文本+结构化输出"任务，选快模型最划算。
+// 注意：模型对象里控制可用性的是 enabled 字段（不是 disabled），auto 带 reasoning.effort=high 会又慢又贵。
+const PREFERRED_MODELS = ['glm-5.3-flash','deepseek-v4-flash','glm-5.2','hy3-x','hy3'];
+async function ensureModel(){
+  if(S.model) return S.model;
+  const models = await cloud.llm.models.list();
+  if(!models || models.length===0) throw new Error('云端暂无可用模型');
+  const usable = models.filter(x=>x.enabled!==false);
+  let m = null;
+  for(const id of PREFERRED_MODELS){
+    m = usable.find(x=>x.id===id);
+    if(m) break;
+  }
+  if(!m) m = usable.find(x=>x.isDefault) || usable[0];
+  if(!m) throw new Error('云端暂无可用模型');
+  S.model = m; return m;
+}
+
+async function llm(system, user, onChunk){
+  const model = await ensureModel();
+  let out='';
+  for await (const chunk of cloud.llm.chat.completions.create({
+    model: model.id,
+    messages:[{role:'system',content:system},{role:'user',content:user}],
+    stream:true,
+    stream_options:{include_usage:true},
+    temperature:0.6,
+  })){
+    const d = chunk.choices?.[0]?.delta?.content;
+    if(d){ out+=d; onChunk && onChunk(d); }
+  }
+  return out;
+}
+
+const SYS_SCORE = `你是财税咨询公司（立丰财税，主营出口退税、1039市场采购、9610跨境电商、个体户核定、合规管家）的B端销售线索质检员。
+客户画像：非近视眼镜（太阳镜/老花镜/时尚镜架/儿童镜/运动镜）贸易商，轻资产、无自有工厂、以电商或云办公经营。
+请严格按三条硬标准给线索打分，只依据输入信息，不臆测、不编造。输出必须是JSON对象，不要任何解释文字。`;
+
+function buildScorePrompt(lead){
+  return `请评估这条眼镜贸易商线索：
+公司：${lead.company||'未知'}
+店铺：${lead.shop_name||'未知'}
+老板：${lead.boss_name||'未知'}
+主营平台：${lead.platforms||'未知'}
+体量证据：${lead.revenue_evidence||'未知'}
+公域需求信号：${lead.demand_signal||'未知'}
+地址：${lead.area||'未知'}
+备注：${lead.note||'无'}
+
+判定规则：
+1) 经营模式：纯贸易/经销、无自有工厂 = 通过；出现"眼镜制造/生产加工/工厂/车间/产线" = 不通过；信息不足 = 存疑。
+2) 品类边界：主营太阳镜/老花镜/时尚镜架/儿童镜/运动镜 = 通过；仅做近视镜、光学镜片、验光配镜 = 不通过。
+3) 体量门槛（任一硬指标满足即通过）：累计评价≥1000 / SKU数量≥50（须写明确数字） / 粉丝≥5000 / 有希音或1688供货资质 / 连续经营≥1年 / 年销售额≥500万人民币 / 员工规模≥50人。
+
+重要校准规则（必须遵守，否则打分失效）：
+- "SKU全/品类全/货品丰富"这类形容词不等于 SKU≥50，只能算存疑，不得判为通过。
+- "规模不小/生意不错/做了很多年"这类描述不等于硬指标，只能算存疑。
+- 只有出现明确数字（如"51-100人""年出口100万美金""11年会员""SKU 800+"）才可判"通过"。
+- 三项中只要有一项判为"不通过"，overall 最高 40 分；两项存疑最高 70 分；三项全部通过才可给 85 分以上。
+- 打分锚点：三项全通过=85~95；两项通过一项存疑=60~80；一项通过两项存疑=40~60；任一不通过=0~40。
+
+输出JSON格式：
+{"score":0-100整数,"grade":"A或B或C","tradeMode":"通过/存疑/不通过","tradeModeNote":"一句话依据","category":"通过/存疑/不通过","categoryNote":"一句话依据","scale":"通过/存疑/不通过","scaleNote":"一句话依据","verdict":"一句话结论","hook":"针对这家公司最适合的切入角度（15字内）"}`;
+}
+
+function pickField(raw, keys){
+  // 从原始JSON文本里精确取某个key的值。不用整体JSON.parse后再读，是因为模型常把
+  // tradeMode 和 tradeModeNote 这类同前缀字段写错序，这里按 key 边界精确匹配。
+  // 同时支持字符串值和数字值（score/grade 可能是裸数字）。
+  for(const k of keys){
+    const reS = new RegExp('"' + k + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"');
+    const ms = raw.match(reS);
+    if(ms && ms[1]) return ms[1].replace(/\\"/g,'"').replace(/\\n/g,' ').trim();
+    const reN = new RegExp('"' + k + '"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)');
+    const mn = raw.match(reN);
+    if(mn) return mn[1];
+  }
+  return '';
+}
+
+async function aiScore(lead){
+  const txt = await llm(SYS_SCORE, buildScorePrompt(lead));
+  const m = txt.match(/\{[\s\S]*\}/);
+  if(!m) throw new Error('AI返回格式异常：'+txt.slice(0,80));
+  const raw = m[0];
+  let r = {};
+  try{ r = JSON.parse(raw); }catch(e){ r = {}; }   // 解析失败也不致命，下面按 key 兜底
+
+  const norm = v => /不通过/.test(v) ? '不通过' : /通过/.test(v) ? '通过' : '存疑';
+  const pick = (...ks) => pickField(raw, ks) || (r[ks[0]] != null ? String(r[ks[0]]) : '');
+
+  const score = Math.max(0, Math.min(100, Math.round(Number(pick('score') || r.score) || 0)));
+  return {
+    score,
+    grade: ['A','B','C'].includes(pick('grade')) ? pick('grade') : (score>=85?'A':score>=60?'B':'C'),
+    tradeMode: norm(pick('tradeMode','model')),
+    tradeModeNote: pick('tradeModeNote','model_note','modelNote'),
+    category: norm(pick('category')),
+    categoryNote: pick('categoryNote','category_note'),
+    scale: norm(pick('scale')),
+    scaleNote: pick('scaleNote','scale_note'),
+    verdict: pick('verdict'),
+    hook: pick('hook'),
+  };
+}
+
+const SYS_SCRIPT = `你是立丰财税的资深B端销售，专做义乌眼镜贸易商的财税获客。
+立丰财税主营：出口退税、1039市场采购贸易、9610跨境电子商务、个体户核定、合规管家。
+你的话术要求：口语化、短句、不油腻、不吹牛、不说"赋能/抓手/闭环"这类词。必须具体到对方业务，让对方觉得"你懂我这行"。禁止编造政策数字和优惠力度。
+
+硬性禁止（违反即作废）：
+- 不许编造立丰的既有客户、案例、服务过的同行、本地仓库或门店（例如"我们仓库就在附近""同片区某某家是我们在做""常年服务义乌某某商家"）。
+- 不许编造具体退税金额、退税率、能省多少钱。
+- 不许承诺"包过""保证退下来"。
+- 如需建立信任，只能用可验证的行业事实说话（如平台结算方式差异、报关与回款需对应），不得虚构自身资质与战绩。
+- 不要出现"小X"这类占位符，用"我"或留空由销售自行替换姓名。`;
+
+function bossTitle(lead){
+  // boss_name 里常混入 HR/招聘/经理 等身份标注，或根本不是老板本人。
+  // 话术里叫错人比叫不出名字更扣分，所以宁可退化成"您"。
+  const raw = (lead.boss_name||'').trim();
+  if(!raw) return '';
+  const name = raw.replace(/[（(].*?[)）]/g,'').replace(/\s/g,'');
+  const isHR = /招聘|HR|人事|hr|经理|主管|专员|助理/i.test(raw);
+  if(isHR) return '';                                  // 招聘联系人不是决策人，不称呼
+  // 中文习惯称"姓+总"，即取第一个字；先剥掉先生/女士/总等后缀
+  const bare = name.replace(/(先生|女士|小姐|总)$/,'');
+  const m = bare.match(/^([\u4e00-\u9fa5])/);
+  if(!m) return '';
+  return m[1] + '总';
+}
+
+function buildScriptPrompt(lead, kind){
+  const kindMap={
+    call:'电话开场（30秒内说完，目标是拿到加微信的机会）',
+    visit:'陌拜破冰（走到门口/进店，前3句话）',
+    wechat:'微信首次添加的验证语+第一条消息',
+    objection:'对方最常见的3个异议及应对（价格贵、有会计了、不需要）',
+  };
+  const title = bossTitle(lead);
+  const isHR = /招聘|HR|人事/i.test(lead.boss_name||'');
+  return `目标客户信息：
+公司：${lead.company||'未知'}
+店铺/品牌：${lead.shop_name||'未知'}
+${title ? '对方称呼：' + title : (isHR ? '注意：现有联系人只是招聘人员，不是决策人，话术里不要用任何称呼，一律用"您"' : '决策人姓名：未知，话术里不要猜称呼，一律用"您"')}${isHR ? '\n（原始记录：' + lead.boss_name + '）' : ''}
+主营平台：${lead.platforms||'未知'}
+体量：${lead.revenue_evidence||'未知'}
+近期动态：${lead.demand_signal||'未知'}
+地址：${lead.area||'未知'}
+切入角度：${lead.score_notes||'无'}
+
+请写【${kindMap[kind]||kindMap.call}】。
+要求：分点输出，每点独立可念。总字数控制在220字以内。不要标题之外的废话。`;
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+
+function renderTopSub(){
+  const n = S.leads.length;
+  const a = S.leads.filter(l=>l.grade==='A').length;
+  $('#topSub').textContent = S.session?.user?.name
+    ? `${S.session.user.name} · 共${n}条线索`
+    : (n?`共 ${n} 条线索 · A级 ${a} 条`:'眼镜贸易商精准拓客');
+}
+
+function render(){
+  renderTopSub();
+  const app=$('#app');
+  if(!S.session){
+    app.innerHTML = loginView();
+    return;
+  }
+  if(S.loading && S.leads.length===0){
+    app.innerHTML = `<div class="loading"><div class="spin"></div>正在加载线索库…</div>`;
+    return;
+  }
+  if(S.tab==='leads') app.innerHTML = leadsView();
+  else if(S.tab==='todo') app.innerHTML = todoView();
+  else if(S.tab==='stats') app.innerHTML = statsView();
+  else app.innerHTML = meView();
+
+  $('#fab').style.display = (S.tab==='leads'||S.tab==='todo') ? 'grid' : 'none';
+  document.querySelectorAll('.nav button').forEach(b=>{
+    b.classList.toggle('on', b.dataset.tab===S.tab);
+  });
+}
+
+function loginView(){
+  return `<div class="login">
+    <div class="ic">◎</div>
+    <h2>镜客雷达</h2>
+    <p>眼镜贸易商精准拓客工作台<br>线索云端同步，团队共享</p>
+    <div class="f" style="text-align:left">
+      <label>手机号</label>
+      <input id="lgPhone" type="tel" inputmode="numeric" maxlength="11" placeholder="11位手机号">
+      <div class="hint" id="lgErr" style="color:var(--bad);min-height:16px"></div>
+    </div>
+    <div class="f" style="text-align:left">
+      <label>验证码</label>
+      <div style="display:flex;gap:8px">
+        <input id="lgCode" type="tel" inputmode="numeric" maxlength="6" placeholder="6位验证码" style="flex:1">
+        <button class="btn ghost" id="btnSendCode" style="width:auto;flex:0 0 auto;padding:10px 14px;margin-top:0;font-size:13.5px">获取验证码</button>
+      </div>
+    </div>
+    <button class="btn" id="btnLogin">登录 / 注册</button>
+    <p style="margin-top:18px;font-size:12px;color:var(--ink3)">首次登录自动创建账号<br>登录后团队共享同一份线索库</p>
+  </div>`;
+}
+
+function filteredLeads(){
+  let arr = S.leads.slice();
+  if(S.filter!=='all'){
+    if(GRADES.includes(S.filter)) arr = arr.filter(l=>l.grade===S.filter);
+    else arr = arr.filter(l=>l.status===S.filter);
+  }
+  const q = S.q.trim().toLowerCase();
+  if(q){
+    arr = arr.filter(l=>[
+      l.company,l.shop_name,l.boss_name,l.phone,l.area,l.platforms,l.demand_signal
+    ].filter(Boolean).some(v=>String(v).toLowerCase().includes(q)));
+  }
+  return arr;
+}
+
+function leadsView(){
+  const arr = filteredLeads();
+  const chips = [
+    ['all','全部'],
+    ['A','A级'],
+    ['B','B级'],
+    ['C','C级'],
+    ['待跟进','待跟进'],
+    ['已联系','已联系'],
+    ['已成交','已成交'],
+  ];
+  return `
+  <div class="searchwrap">
+    <div class="search">
+      <span style="opacity:.5">⌕</span>
+      <input id="q" placeholder="搜公司 / 老板 / 电话 / 地址" value="${esc(S.q)}">
+      ${S.q?'<span id="clr" style="opacity:.5;font-size:16px;padding:0 2px">✕</span>':''}
+    </div>
+  </div>
+  <div class="tabs">
+    ${chips.map(([k,l])=>`<button class="chip ${S.filter===k?'on':''}" data-f="${k}">${l}</button>`).join('')}
+  </div>
+  <div class="list">
+    ${arr.length===0?emptyView():arr.map(cardView).join('')}
+  </div>`;
+}
+
+function emptyView(){
+  const filtered = S.q || S.filter!=='all';
+  return `<div class="empty">
+    <div class="big">◎</div>
+    <p><b>${filtered?'没有匹配的线索':'线索库还是空的'}</b></p>
+    <p>${filtered?'换个关键词或筛选条件试试':'点右下角「+」把跑到的商家录进来'}</p>
+  </div>`;
+}
+
+function cardView(l){
+  const grade = l.grade||'C';
+  const score = Number(l.score)||0;
+  const st = l.status||'待跟进';
+  const nt = daysFrom(l.next_follow_at);
+  let ntTxt='';
+  if(l.next_follow_at){
+    if(nt<0) ntTxt=`<span style="color:var(--bad);font-weight:600">已逾期${-nt}天</span>`;
+    else if(nt===0) ntTxt=`<span style="color:var(--brand-dk);font-weight:600">今天要跟</span>`;
+    else ntTxt=`${fmtDate(l.next_follow_at)}跟进`;
+  }
+  return `<div class="card" data-id="${l.id}">
+    <div class="card-head">
+      <div class="co">${esc(l.company||l.shop_name||'未命名')}</div>
+      <span class="badge ${grade}">${grade}</span>
+    </div>
+    ${l.shop_name&&l.shop_name!==l.company?`<div class="meta" style="margin-top:4px"><span style="color:var(--ink3);font-size:12.5px">店铺：${esc(l.shop_name)}</span></div>`:''}
+    <div class="meta">
+      ${l.boss_name?`<span><i>老板</i>${esc(l.boss_name)}</span>`:''}
+      ${l.platforms?`<span><i>平台</i>${esc(l.platforms.split('/')[0].trim())}</span>`:''}
+      ${st?`<span><i>状态</i>${esc(st)}</span>`:''}
+      ${ntTxt?`<span>${ntTxt}</span>`:''}
+    </div>
+    ${l.area?`<div class="meta"><span><i>地址</i>${esc(l.area)}</span></div>`:''}
+    <div class="phone-row">
+      ${l.phone
+        ? `<span class="num">${esc(l.phone)}</span><button class="mini" data-call="${esc(l.phone)}">拨打</button>`
+        : `<span class="none">电话待补</span>`}
+      <div class="act">
+        <button class="mini ghost" data-edit="${l.id}">编辑</button>
+      </div>
+    </div>
+    <div class="stbar"><div class="bar"><i style="width:${Math.min(100,score)}%"></i></div><span>${score}分</span></div>
+  </div>`;
+}
+
+function todoView(){
+  const arr = S.leads.filter(l=>l.next_follow_at)
+    .sort((a,b)=>String(a.next_follow_at).localeCompare(String(b.next_follow_at)));
+  const over = arr.filter(l=>daysFrom(l.next_follow_at)<0);
+  const today = arr.filter(l=>daysFrom(l.next_follow_at)===0);
+  const soon = arr.filter(l=>{const d=daysFrom(l.next_follow_at);return d>0&&d<=7;});
+  const grp=(t,list)=>{
+    if(!list.length) return '';
+    return `<div style="padding:12px 16px 4px;font-size:12.5px;color:var(--ink2);font-weight:600">${t} · ${list.length}</div>
+      <div class="list" style="padding-top:0">${list.map(cardView).join('')}</div>`;
+  };
+  if(!arr.length){
+    return `<div class="empty"><div class="big">◷</div><p><b>没有待跟进的线索</b></p><p>在线索详情里设「下次跟进时间」，这里就会提醒你</p></div>`;
+  }
+  return grp('⚠ 已逾期',over)+grp('今天',today)+grp('未来7天',soon);
+}
+
+function statsView(){
+  const n=S.leads.length;
+  const a=S.leads.filter(l=>l.grade==='A').length;
+  const deal=S.leads.filter(l=>l.status==='已成交').length;
+  const noPhone=S.leads.filter(l=>!l.phone).length;
+  const byStatus={};
+  S.leads.forEach(l=>{const k=l.status||'待跟进';byStatus[k]=(byStatus[k]||0)+1;});
+  const byArea={};
+  S.leads.forEach(l=>{
+    if(!l.area) return;
+    const k=String(l.area).split(/[·路号栋]/)[0].slice(0,8);
+    byArea[k]=(byArea[k]||0)+1;
+  });
+  const areaSorted=Object.entries(byArea).sort((x,y)=>y[1]-x[1]).slice(0,6);
+  return `
+  <div class="stats">
+    <div class="stat"><div class="n">${n}</div><div class="l">线索</div></div>
+    <div class="stat"><div class="n">${a}</div><div class="l">A级</div></div>
+    <div class="stat"><div class="n">${deal}</div><div class="l">成交</div></div>
+    <div class="stat"><div class="n">${noPhone}</div><div class="l">缺电话</div></div>
+  </div>
+  <div style="padding:16px 16px 0">
+    <div class="script-box">
+      <h3>状态分布</h3>
+      ${Object.entries(byStatus).sort((x,y)=>y[1]-x[1]).map(([k,v])=>`
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13.5px">
+          <span style="flex:0 0 70px;color:var(--ink2)">${esc(k)}</span>
+          <div style="flex:1;height:6px;background:#EFEAE3;border-radius:3px;overflow:hidden">
+            <i style="display:block;height:100%;width:${n?v/n*100:0}%;background:var(--brand);border-radius:3px"></i>
+          </div>
+          <span style="flex:0 0 26px;text-align:right;font-weight:600">${v}</span>
+        </div>`).join('')||'<p style="font-size:13px;color:var(--ink3);margin:0">暂无数据</p>'}
+    </div>
+    <div class="script-box">
+      <h3>区域分布 Top6</h3>
+      ${areaSorted.map(([k,v])=>`
+        <div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13.5px">
+          <span style="color:var(--ink2)">${esc(k)}</span><b>${v}</b>
+        </div>`).join('')||'<p style="font-size:13px;color:var(--ink3);margin:0">暂无数据</p>'}
+    </div>
+  </div>`;
+}
+
+function meView(){
+  const name=S.session?.user?.name||'未命名用户';
+  return `<div style="padding:16px">
+    <div class="script-box" style="text-align:center;padding:24px 16px">
+      <div style="width:62px;height:62px;border-radius:50%;background:var(--brand-lt);color:var(--brand-dk);
+        display:grid;place-items:center;font-size:26px;margin:0 auto 12px">◎</div>
+      <div style="font-size:17px;font-weight:600">${esc(name)}</div>
+      <div style="font-size:12.5px;color:var(--ink3);margin-top:4px">立丰财税 · 眼镜贸易商拓客</div>
+    </div>
+    <div class="dl">
+      <div class="it"><span class="k">线索总数</span><span class="v">${S.leads.length} 条</span></div>
+      <div class="it"><span class="k">本轮批次</span><span class="v">批次001 · 联动U谷</span></div>
+      <div class="it"><span class="k">数据位置</span><span class="v">云端 · 团队共享</span></div>
+    </div>
+    <div class="script-box">
+      <h3>筛选口径（写死在 App 里）</h3>
+      <div class="checks">
+        <div class="ck"><span class="dot p">✓</span><span class="t"><b>纯贸易无工厂</b>：出现"眼镜制造/生产加工/工厂/车间"即判不通过</span></div>
+        <div class="ck"><span class="dot p">✓</span><span class="t"><b>非近视品类</b>：太阳镜/老花镜/镜架/儿童镜/运动镜；排除验光配镜</span></div>
+        <div class="ck"><span class="dot p">✓</span><span class="t"><b>体量门槛</b>：评价≥1000 或 SKU≥50 或粉丝≥5000 或希音/1688供货 或 经营≥1年</span></div>
+      </div>
+    </div>
+    <button class="btn ghost" id="btnLogout" style="margin-top:8px">退出登录</button>
+    <p style="text-align:center;font-size:11.5px;color:var(--ink3);margin-top:16px">电话均为公域公开号码，未编造<br>仅用于合法商务联络</p>
+  </div>`;
+}
+
+/* ============================================================
+   SHEET
+   ============================================================ */
+
+function openSheet(html){
+  const sh=$('#sheet');
+  sh.innerHTML=html;
+  $('#mask').classList.add('on');
+  requestAnimationFrame(()=>sh.classList.add('on'));
+}
+function closeSheet(){
+  const sh=$('#sheet');
+  sh.classList.remove('on');
+  $('#mask').classList.remove('on');
+  setTimeout(()=>{ if(!sh.classList.contains('on')) sh.innerHTML=''; },260);
+}
+
+function leadForm(l={}){
+  const p = (l.platforms||'').split('/').map(s=>s.trim()).filter(Boolean);
+  return `
+  <div class="sheet-h">
+    <h2>${l.id?'编辑线索':'新增线索'}</h2>
+    <button class="close" data-close>✕</button>
+  </div>
+  <div class="sheet-body">
+    <div class="f"><label>公司全称<span class="req">*</span></label>
+      <input id="f_company" value="${esc(l.company||'')}" placeholder="例：义乌市××眼镜有限公司"></div>
+    <div class="f"><label>店铺 / 品牌昵称</label>
+      <input id="f_shop" value="${esc(l.shop_name||'')}" placeholder="例：××眼镜旗舰店"></div>
+    <div class="row2">
+      <div class="f"><label>老板 / 负责人</label>
+        <input id="f_boss" value="${esc(l.boss_name||'')}" placeholder="姓名"></div>
+      <div class="f"><label>等级</label>
+        <select id="f_grade">${GRADES.map(g=>`<option value="${g}" ${l.grade===g?'selected':''}>${g} 级</option>`).join('')}</select></div>
+    </div>
+    <div class="f"><label>联系电话</label>
+      <input id="f_phone" type="tel" inputmode="tel" value="${esc(l.phone||'')}" placeholder="查不到就留空，别乱填"></div>
+    <div class="f"><label>备用电话</label>
+      <input id="f_phone2" type="tel" inputmode="tel" value="${esc(l.phone_alt||'')}" placeholder="固话 / 微信同号"></div>
+    <div class="f"><label>主营平台</label>
+      <input id="f_platforms" value="${esc(l.platforms||'')}" placeholder="如：Shein / Temu / 1688（用 / 分隔）">
+      <div class="hint">${PLATFORMS.slice(0,8).map(x=>`<span class="chip" style="display:inline-block;margin:4px 4px 0 0;font-size:11.5px;padding:3px 9px" data-pf="${x}">${x}</span>`).join('')}</div>
+    </div>
+    <div class="f"><label>销售额 / 体量证据</label>
+      <textarea id="f_rev" placeholder="例：年销1800万；累计评价1.2万；SKU 320个；员工50人">${esc(l.revenue_evidence||'')}</textarea></div>
+    <div class="f"><label>公域需求信号</label>
+      <textarea id="f_demand" placeholder="例：10月新招Temu运营2人，扩编中">${esc(l.demand_signal||'')}</textarea>
+      <div class="hint">这条最能决定开场话术，尽量写具体的、带时间的动作</div></div>
+    <div class="f"><label>地址区域</label>
+      <input id="f_area" value="${esc(l.area||'')}" placeholder="精确到街道 / 楼宇 / 园区，如：联东U谷南区3A栋2楼"></div>
+    <div class="row2">
+      <div class="f"><label>跟进状态</label>
+        <select id="f_status">${STATUSES.map(s=>`<option ${l.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="f"><label>下次跟进</label>
+        <input id="f_next" type="date" value="${l.next_follow_at||''}"></div>
+    </div>
+    <div class="f"><label>信息来源 / 备注</label>
+      <textarea id="f_source" placeholder="店铺链接、工商登记来源、核实说明">${esc(l.source||'')}</textarea></div>
+    <div>${l.id?`<button class="btn" id="btnSave">保存修改</button>
+      <div class="btn-row">
+        <button class="btn ghost" id="btnAi">AI 重新打分</button>
+        <button class="btn ghost" id="btnDel" style="color:var(--bad)">删除</button>
+      </div>`
+      :`<button class="btn" id="btnSave">保存并转客户</button>`}
+    </div>
+    <div style="height:20px"></div>
+  </div>`;
+}
+
+function collectForm(){
+  const f=id=>($('#'+id)?.value||'').trim();
+  const company=f('f_company');
+  if(!company){ toast('公司全称必填'); return null; }
+  const data = {
+    company,
+    shop_name: f('f_shop')||null,
+    boss_name: f('f_boss')||null,
+    phone: f('f_phone')||null,
+    phone_alt: f('f_phone2')||null,
+    platforms: f('f_platforms')||null,
+    revenue_evidence: f('f_rev')||null,
+    demand_signal: f('f_demand')||null,
+    area: f('f_area')||null,
+    status: f('f_status')||'待跟进',
+    grade: f('f_grade')||'C',
+    next_follow_at: f('f_next')||null,
+    source: f('f_source')||null,
+  };
+  // 编辑时必须把表单里没有的字段原样带回，否则 update 会把这些列覆盖成 null，
+  // 会造成 AI 评分、切入角度、生成过的话术莫名清空。
+  if(S.editing){
+    if(S.editing.note != null) data.note = S.editing.note;
+    if(S.editing.script != null) data.script = S.editing.script;
+    if(S.editing.score != null) data.score = S.editing.score;
+    if(S.editing.score_notes != null) data.score_notes = S.editing.score_notes;
+  }
+  return data;
+}
+
+/* ---------- detail ---------- */
+function detailSheet(l){
+  const fus = S.followups.filter(x=>String(x.lead_id)===String(l.id));
+  const score=Number(l.score)||0;
+  const circ=2*Math.PI*28;
+  return `
+  <div class="sheet-h">
+    <h2 style="font-size:15px">${esc(l.company)}</h2>
+    <button class="close" data-close>✕</button>
+  </div>
+  <div class="sheet-body">
+    <div class="score-box">
+      <div class="score-top">
+        <div class="ring">
+          <svg width="66" height="66">
+            <circle cx="33" cy="33" r="28" fill="none" stroke="#EFEAE3" stroke-width="6"/>
+            <circle cx="33" cy="33" r="28" fill="none" stroke="#C4562A" stroke-width="6"
+              stroke-linecap="round" stroke-dasharray="${circ}"
+              stroke-dashoffset="${circ*(1-Math.min(100,score)/100)}"/>
+          </svg>
+          <div class="n">${score||'—'}</div>
+        </div>
+        <div class="score-txt">
+          <h3>合格度 ${l.grade||'C'} 级</h3>
+          <p>${esc(l.score_notes||'还没打分，点下面「AI 打分」按三条硬标准自动核一遍')}</p>
+        </div>
+      </div>
+      ${scoreChecksView(l)}
+    </div>
+
+    <div class="dl">
+      ${l.boss_name?`<div class="it"><span class="k">老板</span><span class="v">${esc(l.boss_name)}</span></div>`:''}
+      <div class="it"><span class="k">电话</span><span class="v ${l.phone?'mono':''}">${l.phone?esc(l.phone)+`<span class="copy" data-copy="${esc(l.phone)}">复制</span>`:'<span style="color:var(--ink3)">未公开</span>'}</span></div>
+      ${l.phone_alt?`<div class="it"><span class="k">备用</span><span class="v mono">${esc(l.phone_alt)}<span class="copy" data-copy="${esc(l.phone_alt)}">复制</span></span></div>`:''}
+      ${l.platforms?`<div class="it"><span class="k">平台</span><span class="v">${esc(l.platforms)}</span></div>`:''}
+      ${l.revenue_evidence?`<div class="it"><span class="k">体量</span><span class="v">${esc(l.revenue_evidence)}</span></div>`:''}
+      ${l.demand_signal?`<div class="it"><span class="k">需求信号</span><span class="v">${esc(l.demand_signal)}</span></div>`:''}
+      ${l.area?`<div class="it"><span class="k">地址</span><span class="v">${esc(l.area)}</span></div>`:''}
+      <div class="it"><span class="k">状态</span><span class="v">${esc(l.status||'待跟进')}</span></div>
+      ${l.next_follow_at?`<div class="it"><span class="k">下次跟进</span><span class="v">${fmtDate(l.next_follow_at)}</span></div>`:''}
+      ${l.source?`<div class="it"><span class="k">来源</span><span class="v" style="font-size:12.5px;color:var(--ink2)">${esc(l.source)}</span></div>`:''}
+    </div>
+
+    <div class="script-box">
+      <h3>⚡ 成交话术</h3>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn ghost" style="font-size:13px;padding:9px" data-script="call">电话开场</button>
+        <button class="btn ghost" style="font-size:13px;padding:9px" data-script="visit">陌拜破冰</button>
+        <button class="btn ghost" style="font-size:13px;padding:9px" data-script="wechat">微信话术</button>
+        <button class="btn ghost" style="font-size:13px;padding:9px" data-script="objection">异议应对</button>
+      </div>
+      <div id="scriptOut">
+        ${l.script?`<pre>${esc(l.script)}</pre><div class="copybtn" data-copyall>复制全部</div>`
+          :`<p style="font-size:13px;color:var(--ink3);margin:0">点上面任一按钮，AI 会结合这家公司的平台、体量和近期动态生成话术</p>`}
+      </div>
+    </div>
+
+    <div class="script-box">
+      <h3>◷ 跟进记录 ${fus.length?`(${fus.length})`:''}</h3>
+      <div id="fuList">
+        ${fus.length?fus.map(f=>`<div style="padding:8px 0;border-bottom:1px solid var(--line);font-size:13px">
+          <div style="color:var(--ink3);font-size:11.5px">${fmtDate(f.created_at)} · ${esc(f.channel||'')} · ${esc(f.owner_name||'')}</div>
+          <div style="margin-top:2px">${esc(f.content)}</div>
+        </div>`).join(''):'<p style="font-size:13px;color:var(--ink3);margin:0">还没有跟进记录</p>'}
+      </div>
+      <div class="f" style="margin-top:10px">
+        <textarea id="fuText" placeholder="这次沟通了什么？对方什么反应？"></textarea>
+      </div>
+      <div class="row2">
+        <div class="f"><select id="fuChannel">
+          <option>电话</option><option>微信</option><option>面谈</option><option>上门</option><option>其他</option>
+        </select></div>
+        <div class="f"><input id="fuNext" type="date"></div>
+      </div>
+      <button class="btn ghost" id="btnAddFu" style="font-size:13.5px;padding:10px">保存跟进 + 设下次提醒</button>
+    </div>
+
+    <div class="btn-row" style="margin-top:4px">
+      <button class="btn" data-edit="${l.id}">编辑信息</button>
+      <button class="btn ghost" id="btnAi2" style="flex:0 0 40%">AI 打分</button>
+    </div>
+    <div style="height:20px"></div>
+  </div>`;
+}
+
+function scoreChecksView(l){
+  if(!l.__checks || !l.__checks.length) return '';
+  return scoreChecksViewFrom(l.__checks);
+}
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+
+document.addEventListener('click', async (e)=>{
+  const t=e.target;
+
+  // nav
+  const navb=t.closest('.nav button');
+  if(navb){ S.tab=navb.dataset.tab; closeSheet(); render(); return; }
+
+  // filter
+  const fb=t.closest('[data-f]');
+  if(fb){ S.filter=fb.dataset.f; render(); return; }
+
+  if(t.closest('#clr')){ S.q=''; render(); return; }
+
+  // login
+  if(t.closest('#btnSendCode')){
+    const phone=($('#lgPhone')?.value||'').trim();
+    const err=$('#lgErr');
+    if(!/^1\d{10}$/.test(phone)){ if(err) err.textContent='请输入正确的 11 位手机号'; return; }
+    if(err) err.textContent='';
+    const btn=t.closest('#btnSendCode');
+    btn.disabled=true; btn.textContent='发送中…';
+    try{
+      const sent=await cloud.auth.sendOtp({phone});
+      if(sent.error){ toast(sent.error.message||'发送失败'); btn.disabled=false; btn.textContent='获取验证码'; return; }
+      PENDING_OTP = { phone, ...sent.data };
+      toast('验证码已发送');
+      let n=60; btn.textContent=`${n}s 后重发`;
+      clearInterval(btn._t);
+      btn._t=setInterval(()=>{
+        n--;
+        if(n<=0){ clearInterval(btn._t); btn.disabled=false; btn.textContent='重新获取'; }
+        else btn.textContent=`${n}s 后重发`;
+      },1000);
+    }catch(e){
+      toast('发送失败：'+(e.message||''));
+      btn.disabled=false; btn.textContent='获取验证码';
+    }
+    return;
+  }
+  if(t.closest('#btnLogin')){
+    const phone=($('#lgPhone')?.value||'').trim();
+    const code=($('#lgCode')?.value||'').trim();
+    const err=$('#lgErr');
+    if(!/^1\d{10}$/.test(phone)){ if(err) err.textContent='请输入正确的 11 位手机号'; return; }
+    if(!PENDING_OTP || PENDING_OTP.phone!==phone){ if(err) err.textContent='请先获取验证码'; return; }
+    if(!/^\d{4,6}$/.test(code)){ if(err) err.textContent='请输入收到的验证码'; return; }
+    if(err) err.textContent='';
+    const btn=t.closest('#btnLogin');
+    btn.disabled=true; btn.textContent='登录中…';
+    try{
+      const r=await cloud.auth.verifyOtp({
+        phone: PENDING_OTP.phone,
+        verificationId: PENDING_OTP.verificationId,
+        isExistingUser: PENDING_OTP.isExistingUser,
+        token: code,
+      });
+      if(r.error){
+        if(err) err.textContent=r.error.message||'验证码错误';
+        btn.disabled=false; btn.textContent='登录 / 注册';
+        return;
+      }
+      PENDING_OTP=null;
+      S.session=r.data?.session||r.data||await cloud.auth.getSession();
+      if(S.session && S.session.user===undefined && S.session.session) S.session=S.session.session;
+      await refresh();
+    }catch(e){
+      if(err) err.textContent=e.message||'登录失败';
+      btn.disabled=false; btn.textContent='登录 / 注册';
+    }
+    return;
+  }
+  if(t.closest('#btnLogout')){
+    await cloud.auth.signOut();
+    S.session=null; S.leads=[]; render();
+    return;
+  }
+
+  // fab
+  if(t.closest('#fab')){ S.editing=null; openSheet(leadForm({})); return; }
+
+  // close
+  if(t.closest('[data-close]')||t.id==='mask'){ closeSheet(); return; }
+
+  // call
+  const cb=t.closest('[data-call]');
+  if(cb){ window.location.href='tel:'+cb.dataset.call; return; }
+
+  // copy
+  const cp=t.closest('[data-copy]');
+  if(cp){
+    const v=cp.dataset.copy;
+    try{ await navigator.clipboard.writeText(v); toast('已复制 '+v); }
+    catch(_){ toast('复制失败，请长按手动复制'); }
+    return;
+  }
+  if(t.closest('[data-copyall]')){
+    const pre=$('#scriptOut pre');
+    if(pre){ try{ await navigator.clipboard.writeText(pre.textContent); toast('话术已复制'); }catch(_){ toast('复制失败'); } }
+    return;
+  }
+
+  // platform chip in form
+  const pf=t.closest('[data-pf]');
+  if(pf){
+    const inp=$('#f_platforms');
+    const cur=inp.value.split('/').map(s=>s.trim()).filter(Boolean);
+    const v=pf.dataset.pf;
+    if(!cur.includes(v)) cur.push(v);
+    inp.value=cur.join(' / ');
+    return;
+  }
+
+  // edit
+  const ed=t.closest('[data-edit]');
+  if(ed){
+    const l=S.leads.find(x=>String(x.id)===ed.dataset.edit);
+    if(l){ S.editing=l; openSheet(leadForm(l)); }
+    return;
+  }
+
+  // save
+  if(t.closest('#btnSave')){
+    const data=collectForm();
+    if(!data) return;
+    const pending = window.__pendingScore;
+    if(pending && !S.editing){
+      Object.assign(data, pending);
+      if(pending.grade) data.grade = pending.grade;
+    }
+    const btn=t.closest('#btnSave');
+    btn.disabled=true; btn.textContent='保存中…';
+    try{
+      const saved=await saveLead(data, S.editing?.id);
+      window.__pendingScore=null;
+      toast(S.editing?'已保存':'已转客户 ✓');
+      await refresh();
+      const fresh=S.leads.find(x=>String(x.id)===String(saved?.id)) || saved;
+      S.editing=null;
+      closeSheet();
+      setTimeout(()=>{ if(fresh) openDetail(fresh); },280);
+    }catch(err){
+      console.error(err);
+      toast('保存失败：'+(err.message||''));
+      btn.disabled=false; btn.textContent=S.editing?'保存修改':'保存并转客户';
+    }
+    return;
+  }
+
+  // delete
+  if(t.closest('#btnDel')){
+    if(!S.editing) return;
+    if(!confirm(`确定删除「${S.editing.company}」？这条线索和它的跟进记录都会一起删掉，不能恢复。`)) return;
+    try{
+      await delLead(S.editing.id);
+      toast('已删除');
+      S.editing=null; closeSheet(); await refresh();
+    }catch(err){ toast('删除失败：'+(err.message||'')); }
+    return;
+  }
+
+  // AI score
+  if(t.closest('#btnAi')||t.closest('#btnAi2')){
+    const lead = t.closest('#btnAi') ? (collectForm()||S.editing) : S.current;
+    if(!lead) return;
+    const btn=t.closest('button');
+    const old=btn.textContent; btn.disabled=true; btn.textContent='打分中…';
+    try{
+      const r=await aiScore(lead);
+      // 字段名为 tradeMode/category/scale；注意不能用 model 命名，会与"model_note"混淆导致解析错位
+      const checks=[
+        {n:'经营模式',s:r.tradeMode==='通过'?'pass':r.tradeMode==='不通过'?'fail':'unk',d:r.tradeModeNote||''},
+        {n:'品类边界',s:r.category==='通过'?'pass':r.category==='不通过'?'fail':'unk',d:r.categoryNote||''},
+        {n:'体量门槛',s:r.scale==='通过'?'pass':r.scale==='不通过'?'fail':'unk',d:r.scaleNote||''},
+      ];
+      const notes = `${r.verdict||''}｜切入角度：${r.hook||''}`;
+      const payload={
+        score: Number(r.score)||0,
+        grade: r.grade||'C',
+        score_notes: notes,
+      };
+      if(S.editing && S.editing.id){
+        await saveLead(payload, S.editing.id);
+        await refresh();
+        const fresh=S.leads.find(x=>String(x.id)===String(S.editing.id));
+        if(fresh) fresh.__checks = checks;
+        S.editing=fresh;
+        closeSheet();
+        setTimeout(()=>{ if(fresh) openDetail(fresh); },260);
+      }else{
+        // 表单里的新线索：先回填等级，保存时一并带上评分
+        $('#f_grade').value = r.grade||'C';
+        window.__pendingScore = payload;
+        toast(`AI 打分 ${r.score} 分 · ${r.grade} 级，点保存入库`);
+      }
+    }catch(err){
+      console.error(err);
+      toast('打分失败：'+(err.message||'请稍后再试'));
+      btn.disabled=false; btn.textContent=old;
+    }
+    return;
+  }
+
+  // script generation
+  const sb=t.closest('[data-script]');
+  if(sb){
+    const lead=S.current;
+    if(!lead) return;
+    const kind=sb.dataset.script;
+    const out=$('#scriptOut');
+    out.innerHTML='<div class="loading" style="padding:18px"><div class="spin"></div>正在结合这家公司信息生成…</div>';
+    document.querySelectorAll('[data-script]').forEach(b=>b.disabled=true);
+    try{
+      let acc='';
+      out.innerHTML='<pre></pre>';
+      const pre=out.querySelector('pre');
+      await llm(SYS_SCRIPT, buildScriptPrompt(lead,kind), d=>{ acc+=d; pre.textContent=acc; });
+      out.innerHTML=`<pre>${esc(acc)}</pre><div class="copybtn" data-copyall>复制全部</div>`;
+      await cloud.database.from('leads').update({script:acc}).eq('id',lead.id);
+      lead.script=acc;
+    }catch(err){
+      console.error(err);
+      out.innerHTML=`<p style="font-size:13px;color:var(--bad);margin:0">生成失败：${esc(err.message||'请稍后重试')}</p>`;
+    }finally{
+      document.querySelectorAll('[data-script]').forEach(b=>b.disabled=false);
+    }
+    return;
+  }
+
+  // add followup
+  if(t.closest('#btnAddFu')){
+    const lead=S.current; if(!lead) return;
+    const txt=($('#fuText')?.value||'').trim();
+    if(!txt){ toast('写点内容再保存'); return; }
+    const ch=$('#fuChannel')?.value;
+    const nx=$('#fuNext')?.value||null;
+    const btn=t.closest('#btnAddFu');
+    btn.disabled=true; btn.textContent='保存中…';
+    try{
+      await addFollowup(lead.id, txt, ch, nx);
+      toast('已记录');
+      await refresh();
+      const fresh=S.leads.find(x=>String(x.id)===String(lead.id));
+      S.current=fresh;
+      closeSheet();
+      setTimeout(()=>{ if(fresh) openDetail(fresh); },260);
+    }catch(err){
+      toast('保存失败：'+(err.message||''));
+      btn.disabled=false; btn.textContent='保存跟进 + 设下次提醒';
+    }
+    return;
+  }
+});
+
+// card tap → detail
+document.addEventListener('click',(e)=>{
+  const card=e.target.closest('.card');
+  if(!card) return;
+  if(e.target.closest('button')) return;
+  const l=S.leads.find(x=>String(x.id)===card.dataset.id);
+  if(l) openDetail(l);
+});
+
+function openDetail(l, checks){
+  S.current=l;
+  openSheet(detailSheet(l));
+  if(checks){
+    const box=document.querySelector('.score-box');
+    if(box){
+      const old=box.querySelector('.checks');
+      if(old) old.remove();
+      const div=document.createElement('div');
+      div.innerHTML=scoreChecksViewFrom(checks);
+      box.appendChild(div.firstElementChild);
+    }
+  }
+}
+function scoreChecksViewFrom(checks){
+  return `<div class="checks">${checks.map(c=>`
+    <div class="ck"><span class="dot ${c.s==='pass'?'p':c.s==='fail'?'f':'u'}">${c.s==='pass'?'✓':c.s==='fail'?'✕':'?'}</span>
+      <span class="t"><b>${esc(c.n)}</b>：${esc(c.d)}</span></div>`).join('')}</div>`;
+}
+
+// search input
+document.addEventListener('input',(e)=>{
+  if(e.target.id==='q'){
+    S.q=e.target.value;
+    const list=document.querySelector('.list');
+    if(list){
+      const arr=filteredLeads();
+      list.innerHTML = arr.length?arr.map(cardView).join(''):emptyView();
+    }
+  }
+});
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+async function bootSession(){
+  let s=null;
+  try{
+    const r=await cloud.auth.getSession();
+    s = r?.data ?? r;
+  }catch(_){}
+  if(!s || !s.user){ S.session=null; render(); return; }
+  S.session=s;
+  await refresh();
+}
+
+(async function boot(){
+  render();
+  try{
+    // OAuth 回调分发（WorkBuddy 账号登录）——必须在任何路由守卫之前
+    const url = new URL(location.href);
+    if(url.searchParams.has('code') || url.searchParams.has('error')){
+      const provider = url.searchParams.get('provider');
+      if(provider==='workbuddy' && typeof cloud.auth.handleWorkBuddyCallback==='function'){
+        const r = await cloud.auth.handleWorkBuddyCallback();
+        if(!r?.error && r?.data){
+          for(const k of ['code','state','provider']) url.searchParams.delete(k);
+          history.replaceState(null,'',`${url.pathname}${url.search}${url.hash}`);
+        }else if(r?.error){
+          toast(r.error.message||'登录失败');
+        }
+      }
+    }
+    await bootSession();
+  }catch(err){
+    console.error(err);
+    toast('连接云端失败，请检查网络');
+    render();
+  }
+  // 预热模型
+  try{ await ensureModel(); }catch(_){}
+})();
+
+// 从后台切回前台时刷新
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible' && S.session) refresh();
+});
+</script>
+</body>
+</html>

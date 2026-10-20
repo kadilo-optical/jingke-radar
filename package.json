@@ -1,0 +1,17 @@
+{
+  "name": "jingke-radar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "镜客雷达 — 眼镜贸易商精准拓客工作台（Capacitor 壳）",
+  "scripts": {
+    "sync:www": "node scripts/copy-www.js",
+    "add:android": "npx cap add android",
+    "sync": "npm run sync:www && npx cap sync android",
+    "build:apk": "npm run sync && cd android && ./gradlew assembleDebug --no-daemon"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/android": "^6.2.0"
+  }
+}
