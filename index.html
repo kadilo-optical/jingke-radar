@@ -1182,7 +1182,13 @@ async function saveLead(payload, id){
 async function delLead(id){
   const { data, error } = await cloud.database.from('leads').delete().eq('id',id).select();
   if(error) throw error;
-  if(!data || data.length===0) throw new Error('删除失败（可能无权限）');
+  if(data && data.length>0) return true;              // 明确删掉了
+  // 回读了空：可能是 RLS 只挡了 SELECT 回读（行已删），也可能是根本没权限删。
+  // 再查一次这条记录还在不在，用事实判断，避免把"已删除"误报成失败。
+  const chk = await cloud.database.from('leads').select('id').eq('id',id);
+  if(chk.error) throw chk.error;
+  if(!chk.data || chk.data.length===0) return true;   // 记录确实不在了 → 删除成功
+  throw new Error('删除失败（可能无权限）');
 }
 
 async function addFollowup(leadId, content, channel, nextAt){
@@ -1239,7 +1245,7 @@ async function llm(system, user, onChunk){
   return out;
 }
 
-const SYS_SCORE = `你是财税咨询公司（立丰财税，主营出口退税、1039市场采购、9610跨境电商、个体户核定、合规管家）的B端销售线索质检员。
+const SYS_SCORE = `你是眼镜供应链服务商（为眼镜贸易商供货/代工的B端供货方，主营太阳镜、老花镜、光学镜架、儿童镜、运动镜的现货批发与柔性定制）的B端销售线索质检员。
 客户画像：非近视眼镜（太阳镜/老花镜/时尚镜架/儿童镜/运动镜）贸易商，轻资产、无自有工厂、以电商或云办公经营。
 请严格按三条硬标准给线索打分，只依据输入信息，不臆测、不编造。输出必须是JSON对象，不要任何解释文字。`;
 
@@ -1311,16 +1317,18 @@ async function aiScore(lead){
   };
 }
 
-const SYS_SCRIPT = `你是立丰财税的资深B端销售，专做义乌眼镜贸易商的财税获客。
-立丰财税主营：出口退税、1039市场采购贸易、9610跨境电子商务、个体户核定、合规管家。
-你的话术要求：口语化、短句、不油腻、不吹牛、不说"赋能/抓手/闭环"这类词。必须具体到对方业务，让对方觉得"你懂我这行"。禁止编造政策数字和优惠力度。
+const SYS_SCRIPT = `你是义乌眼镜供应链的资深B端销售，专做非近视眼镜贸易商的拓客。
+你卖的是：太阳镜、老花镜、光学镜架、儿童镜、运动镜的现货批发与小单快反定制（OEM/ODM）。
+你对接的人：义乌本地做眼镜生意的贸易商、电商卖家、档口老板、跨境卖家（1688/阿里国际站/Temu/Shein/TikTok/亚马逊/义乌购）。
+你的话术要求：口语化、短句、不油腻、不吹牛、不说"赋能/抓手/闭环/链路"这类词。必须具体到对方在卖什么品类、走什么渠道、什么阶段会遇到什么货品问题，让对方觉得"你懂我这行"。可以聊的实打实话题：某个爆款品类今年的流行色/流行镜型、镜架材质（板材/TR90/钛/合金）、镜片染色与偏光、起订量与补货周期、旺季备货节奏（夏季前/开学前/年货季）、跨境包装与出货要求。
 
 硬性禁止（违反即作废）：
-- 不许编造立丰的既有客户、案例、服务过的同行、本地仓库或门店（例如"我们仓库就在附近""同片区某某家是我们在做""常年服务义乌某某商家"）。
-- 不许编造具体退税金额、退税率、能省多少钱。
-- 不许承诺"包过""保证退下来"。
-- 如需建立信任，只能用可验证的行业事实说话（如平台结算方式差异、报关与回款需对应），不得虚构自身资质与战绩。
-- 不要出现"小X"这类占位符，用"我"或留空由销售自行替换姓名。`;
+- 不许编造自家工厂、产能、库存量、已合作客户（例如"我们厂有200台机器""某某品牌是我们做的""义乌一半档口都在我这拿货"）。
+- 不许编造具体价格、折扣、返点、账期数字。
+- 不许承诺"包退包换""断货赔钱""独家代理"。
+- 不许聊财税、退税、报关、核定征收等无关话题——你不做这块。
+- 如需建立信任，只能用可验证的行业事实说话（如某个品类今年确实在起量、某类材质确实在替代老材质），不得虚构自身资质与战绩。
+- 不要出现任何占位符：不写"小X""姓X""某某""XXX""【姓名】"，自我介绍直接说"我"，姓名留空由销售自己补。`;
 
 function bossTitle(lead){
   // boss_name 里常混入 HR/招聘/经理 等身份标注，或根本不是老板本人。
@@ -1340,9 +1348,9 @@ function bossTitle(lead){
 function buildScriptPrompt(lead, kind){
   const kindMap={
     call:'电话开场（30秒内说完，目标是拿到加微信的机会）',
-    visit:'陌拜破冰（走到门口/进店，前3句话）',
+    visit:'陌拜破冰（走到档口/办公室门口，前3句话）',
     wechat:'微信首次添加的验证语+第一条消息',
-    objection:'对方最常见的3个异议及应对（价格贵、有会计了、不需要）',
+    objection:'对方最常见的3个异议及应对（已经有固定供应商、起订量太高、价格比现在拿的贵）',
   };
   const title = bossTitle(lead);
   const isHR = /招聘|HR|人事/i.test(lead.boss_name||'');
@@ -1963,6 +1971,7 @@ function statsView(){
   const a=S.leads.filter(l=>l.grade==='A').length;
   const deal=S.leads.filter(l=>l.status==='已成交').length;
   const noPhone=S.leads.filter(l=>!l.phone).length;
+  const cust=S.leads.filter(l=>l.is_customer===true).length;
   const byStatus={};
   S.leads.forEach(l=>{const k=l.status||'待跟进';byStatus[k]=(byStatus[k]||0)+1;});
   const byArea={};
@@ -1976,8 +1985,14 @@ function statsView(){
   <div class="stats">
     <div class="stat"><div class="n">${n}</div><div class="l">线索</div></div>
     <div class="stat"><div class="n">${a}</div><div class="l">A级</div></div>
+    <div class="stat"><div class="n">${cust}</div><div class="l">我的客户</div></div>
     <div class="stat"><div class="n">${deal}</div><div class="l">成交</div></div>
+  </div>
+  <div class="stats" style="margin-top:0">
     <div class="stat"><div class="n">${noPhone}</div><div class="l">缺电话</div></div>
+    <div class="stat"><div class="n">${n-cust}</div><div class="l">线索库剩余</div></div>
+    <div class="stat"><div class="n">${Object.keys(byStatus).length}</div><div class="l">状态种类</div></div>
+    <div class="stat"><div class="n">${areaSorted.length}</div><div class="l">涉及片区</div></div>
   </div>
   <div style="padding:16px 16px 0">
     <div class="script-box">
@@ -2022,7 +2037,7 @@ function meView(){
       <div style="width:62px;height:62px;border-radius:50%;background:var(--brand-lt);color:var(--brand-dk);
         display:grid;place-items:center;font-size:26px;margin:0 auto 12px">◎</div>
       <div style="font-size:17px;font-weight:600">${esc(name)}${admin?' <span style="font-size:11px;color:#fff;background:var(--brand);border-radius:6px;padding:2px 7px;vertical-align:2px">超管</span>':''}</div>
-      <div style="font-size:12.5px;color:var(--ink3);margin-top:4px">${esc(phone||'立丰财税 · 眼镜贸易商拓客')}</div>
+      <div style="font-size:12.5px;color:var(--ink3);margin-top:4px">${esc(phone||'镜客雷达 · 眼镜贸易商拓客')}</div>
       <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
         <button class="btn ghost" id="btnEditName" style="width:auto;padding:8px 16px;font-size:13px;margin:0">修改用户名</button>
         <button class="btn ghost" id="btnEditPwd" style="width:auto;padding:8px 16px;font-size:13px;margin:0">修改登录密码</button>
@@ -2582,11 +2597,16 @@ document.addEventListener('click', async (e)=>{
   // delete
   if(t.closest('#btnDel')){
     if(!S.editing) return;
-    if(!confirm(`确定删除「${S.editing.company}」？这条线索和它的跟进记录都会一起删掉，不能恢复。`)) return;
+    const target = S.editing;
+    if(!confirm(`确定删除「${target.company}」？这条线索和它的跟进记录都会一起删掉，不能恢复。`)) return;
     try{
-      await delLead(S.editing.id);
+      await delLead(target.id);
+      // 先从本地状态里摘掉，让看板/列表立刻减少；再拉一次云端校准（网络抖动也不影响已删除的事实）
+      S.leads = S.leads.filter(x=>String(x.id)!==String(target.id));
+      S.followups = S.followups.filter(x=>String(x.lead_id)!==String(target.id));
+      S.editing=null; closeSheet(); render();
       toast('已删除');
-      S.editing=null; closeSheet(); await refresh();
+      refresh();
     }catch(err){ toast('删除失败：'+(err.message||'')); }
     return;
   }
@@ -3058,7 +3078,7 @@ async function bootSession(){
    改用最朴素也最可靠的做法——版本号由"打开 App 的地址"带进来：
      分享/下发链接时加 ?v=1.3.2，App 启动读到 v 比自身新就提示更新。
    不涉及任何跨域请求，纯本地判断。 */
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.2';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);

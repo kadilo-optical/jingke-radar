@@ -1,6 +1,6 @@
 {
-  "version": "1.4.0",
-  "note": "新增：7天免密自动登录；按地址找公司升级为真实联网检索报告（搜到N家、勾选后一键入库）",
+  "version": "1.4.2",
+  "note": "修复：AI成交话术/打分全部切回眼镜行业（之前误用财税文案）；删除线索后看板数字立即同步减少（线索/A级/客户/状态分布/区域分布全联动）",
   "apkUrl": "https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk",
   "releasedAt": "2026-10-20"
 }
