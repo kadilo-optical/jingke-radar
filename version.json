@@ -1,6 +1,6 @@
 {
-  "version": "1.3.3",
-  "note": "彻底修复打不开：云端组件已内联进页面，单文件自包含，不再依赖任何外部脚本",
+  "version": "1.4.0",
+  "note": "新增：7天免密自动登录；按地址找公司升级为真实联网检索报告（搜到N家、勾选后一键入库）",
   "apkUrl": "https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk",
   "releasedAt": "2026-10-20"
 }

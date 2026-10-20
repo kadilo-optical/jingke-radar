@@ -55,3 +55,11 @@ try {
   console.error('[sync] SDK 内联失败:', e.message);
   process.exit(1);
 }
+
+// 再内联地址检索引擎（App 内经 CapacitorHttp 直抓搜索引擎，不依赖任何服务器）
+try {
+  execFileSync(process.execPath, [path.join(__dirname, 'inline-addr-search.js')], { stdio: 'inherit' });
+} catch (e) {
+  console.error('[sync] 检索引擎内联失败:', e.message);
+  process.exit(1);
+}
