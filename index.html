@@ -240,6 +240,14 @@ button{cursor:pointer;border:none;background:none;padding:0}
 }
 .script-box .copybtn{margin-top:10px;font-size:12.5px;color:var(--brand);font-weight:500}
 
+/* 旧版财税话术的提示块：不删用户数据，但必须标出来并引导重写 */
+.stale-script{background:#FFF6F0;border:1px solid #F3D5C4;border-radius:12px;padding:12px 13px}
+.stale-script .ss-h{font-size:13px;font-weight:600;color:var(--brand-dk);margin-bottom:5px}
+.stale-script .ss-b{font-size:12.5px;color:var(--ink2);line-height:1.65}
+.stale-script details{margin-top:9px}
+.stale-script summary{font-size:12px;color:var(--ink3);cursor:pointer}
+.stale-script pre{margin:8px 0 0;font-size:12px;color:var(--ink3);white-space:pre-wrap;line-height:1.6;max-height:150px;overflow:auto}
+
 /* ---------- toast ---------- */
 .toast{
   position:fixed;left:50%;bottom:50%;transform:translate(-50%,0);z-index:99;
@@ -275,7 +283,7 @@ button{cursor:pointer;border:none;background:none;padding:0}
       <h1>镜客雷达</h1>
       <div class="sub" id="topSub">眼镜贸易商精准拓客</div>
     </div>
-    <button class="verbtn" id="btnVer" title="当前版本 / 检查更新">v<span id="verNum">1.4.4</span></button>
+    <button class="verbtn" id="btnVer" title="当前版本 / 检查更新">v<span id="verNum">1.4.5</span></button>
     <button class="iconbtn" id="btnUser" title="账号">👤</button>
   </div>
 </header>
@@ -1362,12 +1370,26 @@ const SYS_SCRIPT = `你是义乌眼镜供应链的资深B端销售，专做非�
 你的话术要求：口语化、短句、不油腻、不吹牛、不说"赋能/抓手/闭环/链路"这类词。必须具体到对方在卖什么品类、走什么渠道、什么阶段会遇到什么货品问题，让对方觉得"你懂我这行"。可以聊的实打实话题：某个爆款品类今年的流行色/流行镜型、镜架材质（板材/TR90/钛/合金）、镜片染色与偏光、起订量与补货周期、旺季备货节奏（夏季前/开学前/年货季）、跨境包装与出货要求。
 
 硬性禁止（违反即作废）：
+- 绝对不许出现财税类内容：退税、报关、核定征收、记账、报税、合规、税务、1039、9610、一达通、出口退税、外汇核销、发票。一句话都不能提。你的身份是眼镜供货商，只聊货，不聊钱和税。
 - 不许编造自家工厂、产能、库存量、已合作客户（例如"我们厂有200台机器""某某品牌是我们做的""义乌一半档口都在我这拿货"）。
 - 不许编造具体价格、折扣、返点、账期数字。
 - 不许承诺"包退包换""断货赔钱""独家代理"。
-- 不许聊财税、退税、报关、核定征收等无关话题——你不做这块。
 - 如需建立信任，只能用可验证的行业事实说话（如某个品类今年确实在起量、某类材质确实在替代老材质），不得虚构自身资质与战绩。
 - 不要出现任何占位符：不写"小X""姓X""某某""XXX""【姓名】"，自我介绍直接说"我"，姓名留空由销售自己补。`;
+
+/* 判断一段已保存的话术是不是"过时的财税话术"。
+   v1.4.2 之前提示词误用了财税文案，用户库里存下来的话术全是退税/报关/1039，
+   与眼镜供货毫无关系，必须识别出来提示重写，不能当成有效内容继续展示。 */
+const TAX_WORDS = /退税|报关|核定|记账|报税|合规|税务|财税|1039|9610|一达通|外汇核销|出口退税|17%|13%退税/g;
+const GLASS_WORDS = /太阳镜|老花镜|镜架|偏光|镜片|板材|TR90|钛架|合金|太阳眼镜|墨镜|光学架|镜框|起订量|档口|批发|样品|款式|备货|出货/g;
+function scriptIsStale(s){
+  const t = String(s||'');
+  if(!t.trim()) return false;
+  const tax = (t.match(TAX_WORDS)||[]).length;
+  const glass = (t.match(GLASS_WORDS)||[]).length;
+  // 出现财税词，且眼镜词明显少于财税词 → 判定为过时话术
+  return tax > 0 && glass < tax;
+}
 
 function bossTitle(lead){
   // boss_name 里常混入 HR/招聘/经理 等身份标注，或根本不是老板本人。
@@ -1461,6 +1483,152 @@ async function realAddrSearch(addr, onStage){
   }
 }
 
+/* ---------- 检索去重 ----------
+   把库里已有的公司标成 dup，报告里灰掉、默认不勾选，避免每次都勾到同一批人。
+   比对用"规范化公司名"而非原文，防止「义乌市XX眼镜有限公司」与「义乌XX眼镜有限公司」
+   这种带不带"市"的写法被当成两家。 */
+function normCompanyName(s){
+  return String(s||'')
+    .replace(/\s|　/g,'')
+    .replace(/^(浙江省?|金华市?)/,'')
+    .replace(/^义乌(市)?/,'')
+    .replace(/[（(][^)）]*[)）]/g,'')
+    .replace(/[，,。.、·]/g,'')
+    .toUpperCase();
+}
+function markDuplicates(r){
+  if(!r || !Array.isArray(r.results)) return r;
+  const mine = new Set((S.leads||[]).map(l=>normCompanyName(l.company)));
+  let dup = 0;
+  r.results.forEach(x=>{
+    x.dup = mine.has(normCompanyName(x.name));
+    if(x.dup) dup++;
+  });
+  r.dupCount = dup;
+  r.freshCount = r.results.length - dup;
+  return r;
+}
+
+/* ---------- 自动向外扩展检索范围 ----------
+   很多公司页面上只写"义乌"不写具体街道，片区检索天然搜不全。
+   这里按「片区 → 同街道相邻片区 → 全义乌」逐级外扩，每轮只保留新公司，
+   把真正没见过的线索推上来，而不是反复给同一批。 */
+const YIWU_AREAS = ['北苑','后宅','稠城','江东','稠江','福田','城西','义亭','苏溪','廿三里','上溪','大陈','赤岸','佛堂'];
+
+function areaKeywords(area){
+  const s = String(area||'');
+  return YIWU_AREAS.filter(k=>s.includes(k));
+}
+
+/* 当前片区相邻的片区：只取义乌主城区里离得最近的几个，
+   太远（佛堂/赤岸/大陈）目标客户密度低，放最后一档。 */const NEAR_MAP = {
+  北苑: ['后宅','稠城','城西','稠江'],
+  后宅: ['北苑','城西','苏溪'],
+  稠城: ['福田','北苑','江东','稠江'],
+  江东: ['稠城','稠江','福田'],
+  稠江: ['北苑','城西','稠城','江东'],
+  福田: ['稠城','江东','北苑'],
+  城西: ['北苑','稠江','后宅'],
+  苏溪: ['后宅','廿三里'],
+  廿三里: ['苏溪','福田'],
+  义亭: ['城西','上溪'],
+  上溪: ['城西','义亭'],
+  佛堂: ['义亭','赤岸','江东'],
+  赤岸: ['佛堂','义亭'],
+  大陈: ['苏溪','廿三里'],
+};
+
+/* 执行一轮"往外扩"检索：依次搜相邻片区，只收新公司，追加进当前报告 */
+async function expandSearch(){
+  const r = S.searchResult;
+  if(!r || S.searchExpanding) return;
+  const round = (r.expandRound || 0) + 1;
+  const targets = expandAreaList(r.areaOriginal || r.area, round);
+  if(!targets.length){ toast('已经扩到整个义乌了，没有更远的地方可搜'); return; }
+
+  S.searchExpanding = true;
+  S.searchStage = `正在向外扩展（第 ${round} 波）…`;
+  renderSearchStage();
+  try{
+    const seen = new Set((r.results||[]).map(x=>normCompanyName(x.name)));
+    let added = 0, scanned = 0;
+    const triedAreas = [];
+    for(const a of targets){
+      S.searchStage = `正在扩展搜索「${a}」…`;
+      renderSearchStage();
+      scanned++;
+      try{
+        const one = await realAddrSearch(a, ()=>{});
+        triedAreas.push(a);
+        (one.results||[]).forEach(x=>{
+          const k = normCompanyName(x.name);
+          if(seen.has(k)) return;      // 已经有的不重复收
+          seen.add(k);
+          r.results.push(x);
+          added++;
+        });
+      }catch(_){ /* 单个片区失败不影响整体 */ }
+      // 每轮捞到 6 家以上就够用，别让用户等太久
+      if(added >= 6) break;
+    }
+    r.expandRound = round;
+    r.expandedAreas = [...(r.expandedAreas||[]), ...triedAreas];
+    markDuplicates(r);
+    // 新捞到的默认勾上（库里没有的）
+    const picked = { ...S.searchPicked };
+    (r.results||[]).forEach((x,i)=>{ if(!x.dup && x.level!=='C') picked[i] = true; });
+    S.searchPicked = picked;
+    r.total = (r.results||[]).length;
+
+    S.searchExpanding = false;
+    S.searchStage = '';
+    openSheet(addrSearchView());
+    if(added) toast(`向外扩展扫了 ${scanned} 个片区，新增 ${added} 家`, 3000);
+    else if(round >= 3) toast('周边和全市都扫过了，确实没有更多眼镜公司', 3200);
+    else toast(`扫了 ${scanned} 个片区，没发现新公司，可以再往外扩一次`, 3000);
+  }catch(e){
+    S.searchExpanding = false;
+    S.searchStage = '';
+    openSheet(addrSearchView());
+    toast('扩展检索失败：'+(e.message||'网络异常'));
+  }
+}
+
+/* 检索过程中的进度提示（不重绘整个面板，避免输入框丢焦点） */
+function renderSearchStage(){
+  const el = document.getElementById('searchStage');
+  if(el) el.textContent = S.searchStage || '';
+}
+
+/* 生成"往外扩"的下一批检索地址（按由近到远排序） */
+function expandAreaList(area, round){
+  const base = String(area||'').trim();
+  const keys = areaKeywords(base);
+  const out = [];
+  const push = (a)=>{ a=a.trim(); if(a && a!==base && !out.includes(a)) out.push(a); };
+
+  if(round === 1){
+    // 第一波：同街道/同片区的近邻
+    keys.forEach(k=> (NEAR_MAP[k]||[]).forEach(n=> push('义乌' + n)));
+    // 认不出片区名（比如"义乌联动U谷"这种具体楼宇）：
+    // 先试"去掉楼宇只留街道"，再退化为义乌主城区几个大户
+    if(!out.length){
+      const short = base.replace(/^义乌(市)?/,'').split(/[·路号栋\s]/)[0];
+      if(short && short !== '义乌') push('义乌' + short);
+    }
+    if(!out.length){
+      ['义乌北苑','义乌稠城','义乌后宅','义乌江东'].forEach(a=>push(a));
+    }
+  }else if(round === 2){
+    // 第二波：整个义乌，换不同品类词去捞
+    push('义乌');
+  }else{
+    // 第三波：义乌主城区所有片区逐个扫一遍
+    YIWU_AREAS.forEach(k=> push('义乌' + k));
+  }
+  return out;
+}
+
 /* 发起一次按地址检索并出报告（首次检索与「重新检索」按钮共用） */
 async function doAddrSearch(addr){
   S.searchAddr = addr;
@@ -1471,16 +1639,25 @@ async function doAddrSearch(addr){
   openSheet(addrSearchView());
   try{
     const r = await realAddrSearch(addr, (stage)=>{ S.searchStage = stage; });
+    // 去重：库里已有的公司直接标出来，不让用户反复勾同一批人
+    markDuplicates(r);
+    r.areaOriginal = addr;      // 记住原始输入，扩展时以它为基准
+    r.expandRound = 0;
+    r.expandedAreas = [];
     S.searchResult = r;
-    // 默认勾选 A/B 级（C 级留用户自己判断）
+    // 默认只勾"库里没有的"A/B 级；已有的、C 级的都留给用户自己判断
     const picked = {};
-    (r.results||[]).forEach((x,i)=>{ if(x.level!=='C') picked[i] = true; });
+    (r.results||[]).forEach((x,i)=>{ if(!x.dup && x.level!=='C') picked[i] = true; });
     S.searchPicked = picked;
     S.searchBusy = false;
     S.searchStage = '';
     openSheet(addrSearchView());
+    const fresh = (r.results||[]).filter(x=>!x.dup).length;
+    const dupN = (r.results||[]).length - fresh;
     if(r.blocked) toast('没连上搜索引擎，换个网络再试', 3000);
-    else toast(r.total? `本次搜到 ${r.total} 家公司` : '这次没搜到，换个片区名试试', 2400);
+    else if(!r.total) toast('这次没搜到，换个片区名试试', 2400);
+    else if(dupN) toast(`搜到 ${r.total} 家，其中 ${fresh} 家是新的、${dupN} 家已在库里`, 3200);
+    else toast(`本次搜到 ${r.total} 家公司，都是新的`, 2400);
   }catch(err){
     S.searchBusy = false;
     S.searchStage = '';
@@ -1546,19 +1723,23 @@ function addrSearchView(){
       <h3 style="color:var(--brand-dk)">📍 ${esc(r.area)}</h3>
       <p style="font-size:13px;color:var(--ink2);margin:6px 0 0;line-height:1.7">
         本次按条件搜索到 <b>${r.total}</b> 家公司，其中 A 级 ${st.A||0} 家、B 级 ${st.B||0} 家、C 级 ${st.C||0} 家；
-        已排除 ${st.dropped||0} 家非眼镜主体。<br>
+        已排除 ${st.dropped||0} 家非眼镜主体。
+        ${r.dupCount ? `<br><b style="color:var(--brand-dk)">其中 ${r.dupCount} 家已在你的线索库里</b>（已灰掉、默认不勾选），真正新的 <b>${r.freshCount}</b> 家。` : ''}
+        ${(r.expandedAreas||[]).length ? `<br><span style="font-size:12px;color:var(--ink3)">已向外扩展 ${r.expandRound} 波：${esc((r.expandedAreas||[]).slice(0,12).join('、'))}</span>` : ''}
+        <br>
         <span style="font-size:12px;color:var(--ink3)">检索完成于 ${new Date(r.searchedAt).toLocaleString('zh-CN')}，共发起 ${st.rounds||0} 轮检索</span>
       </p>
     </div>`;
 
   const rows = list.map((x,i)=>`
-    <div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px;background:#fff">
+    <div style="border:1px solid ${x.dup?'#E4E0DA':'var(--line)'};border-radius:12px;padding:12px;margin-top:10px;background:${x.dup?'#FAF8F5':'#fff'}">
       <div style="display:flex;gap:10px;align-items:flex-start">
-        <input type="checkbox" data-pick="${i}" ${S.searchPicked[i]?'checked':''}
+        <input type="checkbox" data-pick="${i}" ${S.searchPicked[i]?'checked':''} ${x.dup?'disabled':''}
           style="width:20px;height:20px;margin-top:2px;flex:0 0 auto;accent-color:var(--brand)">
         <div style="flex:1;min-width:0">
-          <div style="font-size:14.5px;font-weight:600;line-height:1.4">${esc(x.name)}</div>
+          <div style="font-size:14.5px;font-weight:600;line-height:1.4;color:${x.dup?'var(--ink3)':'inherit'}">${esc(x.name)}</div>
           <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+            ${x.dup?'<span style="font-size:11px;padding:2px 7px;border-radius:6px;background:#EFECE8;color:#7A7168">✓ 已在库里</span>':''}
             <span style="font-size:11px;padding:2px 7px;border-radius:6px;background:${x.level==='A'?'#E8F5E9':x.level==='B'?'#FFF4E5':'#F1EFEC'};color:${x.level==='A'?'#2E7D32':x.level==='B'?'#B26A00':'#6B635B'}">${x.level} 级</span>
             <span style="font-size:11px;padding:2px 7px;border-radius:6px;background:${x.inArea?'#E8F5E9':'#F1EFEC'};color:${x.inArea?'#2E7D32':'#6B635B'}">${x.inArea?'在片区内':'全义乌'}</span>
             <span style="font-size:11px;padding:2px 7px;border-radius:6px;background:#F1EFEC;color:#6B635B">命中 ${x.hits} 次</span>
@@ -1601,8 +1782,12 @@ function addrSearchView(){
         确认入库（${pickedCount} 家）
       </button>
     </div>
-    <p style="font-size:11.5px;color:var(--ink3);text-align:center;margin-top:10px;line-height:1.6">
-      确认后这些公司会自动进入你的线索库，并带上地址、电话与检索依据
+    <button class="btn ghost" id="btnExpandSearch" style="width:100%;margin-top:8px" ${S.searchExpanding?'disabled':''}>
+      ${S.searchExpanding ? '正在向外扩展…' : '向外扩展搜索（找更多没见过的）'}
+    </button>
+    <div id="searchStage" style="font-size:12px;color:var(--ink3);text-align:center;margin-top:8px;min-height:16px">${esc(S.searchStage||'')}</div>
+    <p style="font-size:11.5px;color:var(--ink3);text-align:center;margin-top:2px;line-height:1.6">
+      扩展会依次扫相邻片区 → 全义乌 → 全市各片区，只收库里没有的新公司
     </p>` : '';
 
   const dropped = (r.dropped||[]).length ? `
@@ -2317,8 +2502,14 @@ function detailSheet(l){
         <button class="btn ghost" style="font-size:13px;padding:9px" data-script="objection">异议应对</button>
       </div>
       <div id="scriptOut">
-        ${l.script?`<pre>${esc(l.script)}</pre><div class="copybtn" data-copyall>复制全部</div>`
-          :`<p style="font-size:13px;color:var(--ink3);margin:0">点上面任一按钮，AI 会结合这家公司的平台、体量和近期动态生成话术</p>`}
+        ${l.script ? (scriptIsStale(l.script)
+          ? `<div class="stale-script">
+               <div class="ss-h">⚠ 这段话术是旧版生成的（财税内容，和眼镜供货无关）</div>
+               <div class="ss-b">早期版本的提示词误用的是财税文案，已保存的旧话术不会自动更新。点下面任一按钮会覆盖重写成眼镜相关的话术。</div>
+               <details><summary>查看旧话术</summary><pre>${esc(l.script)}</pre></details>
+             </div>`
+          : `<pre>${esc(l.script)}</pre><div class="copybtn" data-copyall>复制全部</div>`)
+          : `<p style="font-size:13px;color:var(--ink3);margin:0">点上面任一按钮，AI 会结合这家公司的平台、体量和近期动态生成话术</p>`}
       </div>
     </div>
 
@@ -2972,6 +3163,12 @@ document.addEventListener('click', async (e)=>{
     return;
   }
 
+  // 向外扩展检索范围（相邻片区 → 全义乌 → 各片区）
+  if(t.closest('#btnExpandSearch')){
+    expandSearch();
+    return;
+  }
+
   // 开始检索 → 真实联网抓取 → 出报告
   if(t.closest('#btnDoAddr')){
     const addr = ($('#f_addr')?.value||'').trim();
@@ -3020,10 +3217,12 @@ document.addEventListener('click', async (e)=>{
     const btn = t.closest('#btnConfirmImport');
     btn.disabled = true; btn.textContent = '正在入库…';
     try{
-      const exist = new Set((S.leads||[]).map(l=>String(l.company||'').trim()));
+      // 用规范化名称比对，防止「义乌市XX」和「义乌XX」被当成两家重复入库
+      const exist = new Set((S.leads||[]).map(l=>normCompanyName(l.company)));
       let ok = 0, skip = 0, fail = 0;
       for(const x of picked){
-        if(exist.has(x.name.trim())){ skip++; continue; }
+        const nk = normCompanyName(x.name);
+        if(exist.has(nk)){ skip++; continue; }
         try{
           await saveLead({
             company: x.name,
@@ -3048,6 +3247,8 @@ document.addEventListener('click', async (e)=>{
       let msg = `已入库 ${ok} 家`;
       if(skip) msg += `，跳过重复 ${skip} 家`;
       if(fail) msg += `，失败 ${fail} 家`;
+      // 入库后把剩下的结果标一遍重复，用户接着往下扩时不会又看到这批
+      markDuplicates(S.searchResult);
       toast(msg, 3000);
       S.tab = 'leads';
       S.searchResult = null;
@@ -3151,7 +3352,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.4';
+const APP_VERSION = '1.4.5';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);

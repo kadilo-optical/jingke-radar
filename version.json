@@ -1,6 +1,6 @@
 {
-  "version": "1.4.4",
-  "note": "新增：顶部显示版本号，点击可手动检查更新；打开 App 自动检测新版本并弹升级提示（从此不用再手动问有没有新版）",
+  "version": "1.4.5",
+  "note": "检索报告自动标出已在库里的公司（灰掉不勾选）；新增「向外扩展搜索」按钮（相邻片区→全义乌→全市，只收新公司）；旧财税话术已清除并有明确提示",
   "apkUrl": "https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk",
   "releasedAt": "2026-10-20"
 }
