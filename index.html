@@ -450,7 +450,12 @@ async function saveLead(payload, id){
     return data[0];
   }else{
     const { data, error } = await cloud.database
-      .from('leads').insert(payload).select();
+      .from('leads').insert({
+        ...payload,
+        owner_id: currentUid() || 'anonymous',
+        owner_phone: currentPhone() || null,
+        owner_name: displayName()==='未命名用户' ? null : displayName(),
+      }).select();
     if(error) throw error;
     return data[0];
   }
@@ -467,6 +472,8 @@ async function addFollowup(leadId, content, channel, nextAt){
     lead_id: leadId, content, channel: channel||'电话',
     next_at: nextAt||null,
     owner_name: displayName()==='未命名用户' ? null : displayName(),
+    owner_id: currentUid() || 'anonymous',
+    owner_phone: currentPhone() || null,
   });
   if(error) throw error;
   if(nextAt){
@@ -818,6 +825,74 @@ function render(){
 }
 
 const DEFAULT_PWD = '123123';
+const SUPER_ADMIN_PHONE = '18279321863';   // 超管手机号：可看/可编辑全部客户
+
+/* 当前登录用户信息（手机号从 session 里取，缺失则回退到本机缓存） */
+function currentPhone(){
+  const u = S.session?.user;
+  const raw = u?.phone || u?.phoneNumber || u?.phone_number ||
+              (u?.raw && (u.raw.phone_number || u.raw.phone)) || '';
+  const digits = String(raw).replace(/\D/g,'');
+  if(digits) return digits.replace(/^86(?=1\d{10}$)/,'');
+  try{ return localStorage.getItem('radar_login_phone') || ''; }catch(_){ return ''; }
+}
+let SESSION_IS_ADMIN = null;   // 登录后由服务端权威判定结果写入
+function isSuperAdmin(){
+  if(SESSION_IS_ADMIN !== null) return SESSION_IS_ADMIN;
+  // 服务端还没回来时先用手机号兜底（同一套规则，与数据库里的 is_super_admin() 一致）
+  const p = currentPhone();
+  return !!p && p === SUPER_ADMIN_PHONE;
+}
+
+/* 让服务端权威判定一次"我是不是超管"。
+   数据库里 public.is_super_admin() 已开放给 authenticated/anon，
+   它直接查 auth.users.phone_number 比对超管手机号 —— 这就是唯一真相。
+   调用失败（网络抖动）时退回本地手机号比对，避免把人误降成销售员。 */
+async function syncAdminFlag(){
+  const phoneAdmin = currentPhone() === SUPER_ADMIN_PHONE;
+  try{
+    const r = await cloud.database.rpc('is_super_admin', {});
+    const v = r && (r.data !== undefined ? r.data : r);
+    if(!r || r.error){
+      SESSION_IS_ADMIN = phoneAdmin;
+    }else if(typeof v === 'boolean'){
+      SESSION_IS_ADMIN = v;
+    }else if(Array.isArray(v)){
+      const first = v[0];
+      SESSION_IS_ADMIN = (typeof first === 'boolean') ? first
+        : !!(first && (first.is_super_admin ?? Object.values(first)[0]));
+    }else if(v && typeof v === 'object'){
+      SESSION_IS_ADMIN = !!(v.is_super_admin ?? Object.values(v)[0]);
+    }else{
+      SESSION_IS_ADMIN = phoneAdmin;
+    }
+  }catch(_){
+    SESSION_IS_ADMIN = phoneAdmin;
+  }
+  return SESSION_IS_ADMIN;
+}
+
+/* 登录成功后统一收尾：缓存手机号 + 拉服务端判定 + 刷新数据 */
+async function afterLogin(phone){
+  try{ localStorage.setItem('radar_login_phone', phone || currentPhone() || ''); }catch(_){}
+  SESSION_IS_ADMIN = null;
+  await syncAdminFlag();
+  await refresh();
+}
+/* 归属人的展示名：优先 owner_name，退化到手机号 */
+function ownerLabel(l){
+  const name = (l.owner_name||'').trim();
+  const phone = (l.owner_phone||'').trim();
+  if(name && phone) return `${name}`;
+  if(name) return name;
+  if(phone) return phone;
+  return '未知来源';
+}
+
+function currentUid(){
+  return S.session?.user?.id || '';
+}
+
 const PWD_SYNCED_KEY = 'radar_pwd_synced';   // 记录"本机已尝试为账号开通初始密码"的手机号
 
 /* 为验证码注册的老账号补一个初始密码（尽力而为，不阻断登录）。
@@ -902,7 +977,8 @@ function markSeen(id){
 function isSeen(id){ return seenSet().has(String(id)); }
 
 function filteredLeads(){
-  let arr = S.leads.slice();
+  // 已转入「我的客户」的不再出现在线索库（只留在待跟进-我的客户里）
+  let arr = S.leads.filter(l=>l.is_customer !== true);
   if(S.filter!=='all'){
     if(GRADES.includes(S.filter)) arr = arr.filter(l=>l.grade===S.filter);
     else arr = arr.filter(l=>l.status===S.filter);
@@ -1028,6 +1104,7 @@ function cardView(l){
       ${ntTxt?`<span>${ntTxt}</span>`:''}
     </div>
     ${l.area?`<div class="meta"><span><i>地址</i>${esc(l.area)}</span></div>`:''}
+    ${isSuperAdmin()?`<div class="meta"><span style="color:var(--ink3);font-size:12px">来源：${esc(ownerLabel(l))}${l.is_customer?' · 已转客户':''}</span></div>`:''}
     <div class="phone-row">
       ${l.phone
         ? `<span class="num">${esc(l.phone)}</span><button class="mini" data-call="${esc(l.phone)}">拨打</button>`
@@ -1049,6 +1126,7 @@ function todoView(){
   const over = arr.filter(l=>daysFrom(l.next_follow_at)<0);
   const today = arr.filter(l=>daysFrom(l.next_follow_at)===0);
   const soon = arr.filter(l=>{const d=daysFrom(l.next_follow_at);return d>0&&d<=7;});
+  // 我的客户 / 全部客户（超管）：服务端已按归属隔离，这里拿到的就是"自己的"（超管拿到全部）
   const myCustomers = S.leads.filter(isCust)
     .sort((a,b)=>String(b.customer_at||'').localeCompare(String(a.customer_at||'')));
 
@@ -1061,7 +1139,7 @@ function todoView(){
   // 「我的客户」区块始终显示，让人知道这块在哪
   const custBlock = `
     <div style="padding:14px 16px 6px;display:flex;align-items:center;gap:8px">
-      <span style="font-size:13.5px;color:var(--ink);font-weight:600">我的客户</span>
+      <span style="font-size:13.5px;color:var(--ink);font-weight:600">${isSuperAdmin()?'全部客户（超管视角）':'我的客户'}</span>
       <span style="font-size:12px;color:var(--ink3);background:var(--brand-lt);color:var(--brand-dk);padding:1px 8px;border-radius:20px">${myCustomers.length}</span>
     </div>
     ${myCustomers.length
@@ -1134,13 +1212,16 @@ function displayName(){
 
 function meView(){
   const name=displayName();
-  const phone=S.session?.user?.phone||S.session?.user?.email||'';
-  const myCount=S.leads.filter(x=>x.is_customer===true).length;
+  const phone=currentPhone()||S.session?.user?.phone||S.session?.user?.email||'';
+  const admin=isSuperAdmin();
+  const myCount=admin
+    ? S.leads.filter(x=>x.is_customer===true).length
+    : S.leads.filter(x=>x.is_customer===true).length;
   return `<div style="padding:16px">
     <div class="script-box" style="text-align:center;padding:24px 16px">
       <div style="width:62px;height:62px;border-radius:50%;background:var(--brand-lt);color:var(--brand-dk);
         display:grid;place-items:center;font-size:26px;margin:0 auto 12px">◎</div>
-      <div style="font-size:17px;font-weight:600">${esc(name)}</div>
+      <div style="font-size:17px;font-weight:600">${esc(name)}${admin?' <span style="font-size:11px;color:#fff;background:var(--brand);border-radius:6px;padding:2px 7px;vertical-align:2px">超管</span>':''}</div>
       <div style="font-size:12.5px;color:var(--ink3);margin-top:4px">${esc(phone||'立丰财税 · 眼镜贸易商拓客')}</div>
       <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
         <button class="btn ghost" id="btnEditName" style="width:auto;padding:8px 16px;font-size:13px;margin:0">修改用户名</button>
@@ -1148,9 +1229,9 @@ function meView(){
       </div>
     </div>
     <div class="dl">
-      <div class="it"><span class="k">线索总数</span><span class="v">${S.leads.length} 条</span></div>
-      <div class="it"><span class="k">我的客户</span><span class="v">${myCount} 家</span></div>
-      <div class="it"><span class="k">数据位置</span><span class="v">云端 · 团队共享</span></div>
+      <div class="it"><span class="k">${admin?'可见线索（全部）':'我的线索'}</span><span class="v">${S.leads.length} 条</span></div>
+      <div class="it"><span class="k">${admin?'全部客户':'我的客户'}</span><span class="v">${myCount} 家</span></div>
+      <div class="it"><span class="k">数据位置</span><span class="v">云端 · ${admin?'全员可见':'仅本人可见'}</span></div>
       <div class="it"><span class="k">版本</span><span class="v">v${esc(APP_VERSION)}</span></div>
     </div>
     <div class="script-box">
@@ -1367,6 +1448,7 @@ function detailSheet(l){
       <div class="it"><span class="k">状态</span><span class="v">${esc(l.status||'待跟进')}</span></div>
       ${l.next_follow_at?`<div class="it"><span class="k">下次跟进</span><span class="v">${fmtDateTime(l.next_follow_at)}</span></div>`:''}
       ${l.source?`<div class="it"><span class="k">来源</span><span class="v" style="font-size:12.5px;color:var(--ink2)">${esc(l.source)}</span></div>`:''}
+      ${isSuperAdmin()?`<div class="it"><span class="k">录入人</span><span class="v" style="font-size:12.5px">${esc(ownerLabel(l))}${l.owner_phone?` · ${esc(l.owner_phone)}`:''}</span></div>`:''}
     </div>
 
     <div class="script-box">
@@ -1413,8 +1495,7 @@ function detailSheet(l){
     </div>
     ${l.is_customer
       ? `<button class="btn ghost" id="btnUncustomer" style="margin-top:10px;font-size:13.5px;color:var(--ink2)">移出我的客户（回到线索库）</button>`
-      : `<button class="btn" id="btnCustomer" style="margin-top:10px;background:var(--ok)">转入我的客户 →</button>`}
-    <div style="height:20px"></div>
+      : `<button class="btn" id="btnCustomer" style="margin-top:10px;background:var(--ok)">转入我的客户 →</button>`}    <div style="height:20px"></div>
   </div>`;
 }
 
@@ -1513,15 +1594,19 @@ document.addEventListener('click', async (e)=>{
       const r=await cloud.auth.signInWithPassword({phone, password:pwd});
       if(r.error){
         const msg = r.error.message||'';
-        if(err) err.textContent = /incorrect|invalid_username/i.test(msg)
-          ? '手机号或密码不对。首次使用请点「验证码登录」'
+        const code = r.error.code||'';
+        if(err) err.textContent =
+          (code==='password_not_set' || /password not set/i.test(msg))
+            ? '这个号还没设过密码。请点下方「验证码登录」进来，之后在「我的」里设一个'
+          : /incorrect|invalid_username/i.test(msg)
+            ? '手机号或密码不对。首次使用请点「验证码登录」'
           : msg;
         btn.disabled=false; btn.textContent=old;
         return;
       }
       S.session=r.data?.session||r.data||await cloud.auth.getSession();
       if(S.session && S.session.user===undefined && S.session.session) S.session=S.session.session;
-      await refresh();
+      await afterLogin(phone);
     }catch(e){
       if(err) err.textContent=e.message||'登录失败';
       btn.disabled=false; btn.textContent=old;
@@ -1587,7 +1672,7 @@ document.addEventListener('click', async (e)=>{
       toast(isNew ? `账号已创建，初始密码 ${DEFAULT_PWD}` : '登录成功');
       // 老用户（验证码注册、从未设过密码）在这里补一个默认密码，下次可直接用密码登录
       if(!isNew) ensureDefaultPassword(phone);
-      await refresh();
+      await afterLogin(phone);
     }catch(e){
       if(err) err.textContent=e.message||'登录失败';
       btn.disabled=false; btn.textContent='登录 / 注册';
@@ -1596,7 +1681,7 @@ document.addEventListener('click', async (e)=>{
   }
   if(t.closest('#btnLogout')){
     await cloud.auth.signOut();
-    S.session=null; S.leads=[]; render();
+    S.session=null; S.leads=[]; S.followups=[]; SESSION_IS_ADMIN=null; render();
     return;
   }
 
@@ -1797,7 +1882,14 @@ document.addEventListener('click', async (e)=>{
     btn.disabled=true; btn.textContent='转移中…';
     try{
       await cloud.database.from('leads')
-        .update({ is_customer:true, customer_at:new Date().toISOString(), updated_at:new Date().toISOString() })
+        .update({
+          is_customer:true,
+          customer_at:new Date().toISOString(),
+          updated_at:new Date().toISOString(),
+          // 客户归属：转入操作者成为这个客户的负责人
+          customer_owner_id: currentUid() || 'anonymous',
+          customer_owner_name: ownerLabel({owner_name:displayName(), owner_phone:currentPhone()}),
+        })
         .eq('id', lead.id);
       toast('已转入我的客户 ✓');
       await refresh();
@@ -1820,7 +1912,7 @@ document.addEventListener('click', async (e)=>{
     btn.disabled=true; btn.textContent='处理中…';
     try{
       await cloud.database.from('leads')
-        .update({ is_customer:false, customer_at:null, updated_at:new Date().toISOString() })
+        .update({ is_customer:false, customer_at:null, customer_owner_id:null, customer_owner_name:null, updated_at:new Date().toISOString() })
         .eq('id', lead.id);
       toast('已移回线索库');
       await refresh();
@@ -2082,6 +2174,8 @@ async function bootSession(){
   }catch(_){}
   if(!s || !s.user){ S.session=null; render(); return; }
   S.session=s;
+  SESSION_IS_ADMIN = null;
+  await syncAdminFlag();
   await refresh();
 }
 
@@ -2089,7 +2183,7 @@ async function bootSession(){
    APK 里的网页是打包进去的，改完线上网页不会自动进到 App 里。
    这里在 App 壳内启动时读一次线上的 version.json，与自身版本比对，
    发现更新就提示用户。网页版不需要这个逻辑（网页本身永远是最新的）。 */
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 async function checkAppUpdate(){
   if(window.APP_ENV !== 'native') return;         // 只在 App 壳内检查
