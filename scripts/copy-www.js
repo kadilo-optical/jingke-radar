@@ -7,7 +7,6 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const WWW = path.join(ROOT, 'www');
 const FILES = ['index.html', 'public-config.js', 'sdk.js'];
-
 const verFile = path.join(ROOT, 'version.json');
 if (!fs.existsSync(verFile)) {
   console.error('[sync] 缺少 version.json');
@@ -46,3 +45,13 @@ for (const f of FILES) {
 }
 
 console.log(`[sync] 完成 → ${WWW}`);
+
+// 最后一步：把 sdk.js 内联进 www/index.html，让 App 里的页面成为单文件自包含版本。
+// 这样 WebView 就算文件路径解析异常、或者完全离线，也不会因为拿不到 sdk.js 而白屏。
+const { execFileSync } = require('child_process');
+try {
+  execFileSync(process.execPath, [path.join(__dirname, 'inline-sdk.js')], { stdio: 'inherit' });
+} catch (e) {
+  console.error('[sync] SDK 内联失败:', e.message);
+  process.exit(1);
+}
