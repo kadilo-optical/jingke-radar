@@ -1,6 +1,6 @@
 {
-  "version": "1.4.6",
-  "note": "地址改为省/市/区县/区域四级滑动选择；可直接粘贴整段地址自动识别四级；线索表单地址同步升级；老数据无需迁移",
+  "version": "1.4.7",
+  "note": "按地址找公司全面收紧：片区外的公司不再显示；库里已有的公司直接从清单里隐藏（只报数量）；认定依据改成只看地址/公司名，不再被搜索摘要带偏；录入人改为「昵称 · 号码」显示，历史脏数据不再出现两个号码",
   "apkUrl": "https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk",
-  "releasedAt": "2026-10-20"
+  "releasedAt": "2026-10-21"
 }

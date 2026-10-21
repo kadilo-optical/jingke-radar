@@ -946,7 +946,15 @@ function extractByBlocks(snippets, query, target = '') {
   return out;
 }
 
-/* 地址归片：判断这条线索是否真的落在用户指定的区域里 */
+/* 地址归片：判断这条线索是否真的落在用户指定的区域里
+   ------------------------------------------------------------
+   旧版只要「公司名/地址/摘要」里出现过片区词就算在片区内，
+   但搜索结果页的摘要常带"推荐附近公司"等噪声，导致外地公司也被判进片区。
+   新版分三档打分，并且**不看摘要**（摘要最容易误导）：
+     2 分 = 地址里明确出现片区词（最可信）
+     1 分 = 公司名里出现片区词（次可信）
+     0 分 = 只有摘要提到，或完全没提到 → 不算在片区
+   同时排除明显在外地的（地址里有别的市/区县身份词）。 */
 function areaMatchScore(item, area, geoIn) {
   const geo = geoIn || (typeof area === 'object' ? area : guessGeo(normalizeArea(area)));
   const base = normalizeArea(geo.area || '');
@@ -954,10 +962,34 @@ function areaMatchScore(item, area, geoIn) {
   let rest = base;
   drop.forEach((d) => { rest = rest.split(d).join(' '); });
   const tokens = rest.split(/\s+/).filter((x) => x.length >= 2);
-  const blob = [item.name, ...(item.addrs || []), item.snippet || ''].join(' ');
-  if (!tokens.length) return { inArea: true, matched: [] };
-  const matched = tokens.filter((t) => blob.includes(t));
-  return { inArea: matched.length > 0, matched };
+  const addrs = (item.addrs || []).join(' ');
+  const name = item.name || '';
+  const snippet = item.snippet || '';
+  if (!tokens.length) return { inArea: true, matched: [], score: 2 };
+
+  const addrMatched = tokens.filter((t) => addrs.includes(t));
+  const nameMatched = tokens.filter((t) => name.includes(t));
+  const anyMatched = [...new Set([...addrMatched, ...nameMatched])];
+
+  let score = 0;
+  if (addrMatched.length) score = 2;
+  else if (nameMatched.length) score = 1;
+
+  // 有地址且地址里出现了"别的城市"的市/区县名，且完全没提本片区 → 明确判为不在片区
+  if (!score && addrs) {
+    const FOREIGN = /(杭州市|宁波市|温州市|台州市|绍兴市|嘉兴市|湖州市|丽水市|衢州市|舟山市|苏州市|无锡市|南京市|常州市|广州市|深圳市|东莞市|佛山市|泉州市|厦门市|福州市|青岛市|济南市|郑州市|武汉市|成都市|长沙市|合肥市|南昌市|西安市|沈阳市|大连市)/g;
+    const foreignHits = (addrs.match(FOREIGN) || []);
+    const isLocal = foreignHits.length === 0
+      || (geo.city && foreignHits.every((f) => f === geo.city))
+      || (geo.county && addrs.includes(geo.county));
+    if (!isLocal) return { inArea: false, matched: [], score: 0, foreign: true };
+  }
+
+  return {
+    inArea: score >= 1,
+    matched: score ? anyMatched : tokens.filter((t) => snippet.includes(t)),
+    score,
+  };
 }
 
 /* 第二轮：对已确认的义乌眼镜公司逐个补地址和电话。
@@ -1076,11 +1108,14 @@ async function runAddressSearch(area, opts = {}) {
       level: j.level,
       relevant: j.relevant,
       inArea: am.inArea,
+      areaScore: am.score || 0,
       areaMatched: am.matched,
       reasons: j.reasons,
       lead: toLeadPayload(it, areaLabel, j),
     };
   });
+  // 把命中的片区词挂到结果上，报告里能直接显示"凭哪个词认定了它在片区内"
+  results.forEach((x) => { x.areaHit = (x.areaMatched || []).join('、'); });
 
   // 第二轮：补地址和电话（只对相关的做，最多 10 家，避免耗时过长）
   if (opts.enrich !== false) {
@@ -1097,7 +1132,7 @@ async function runAddressSearch(area, opts = {}) {
 
   const roundStats = rounds.map((r) => ({ tier: r.tier, query: r.query, ok: r.ok, via: r.via, err: r.err, found: r.found }));
   const okRounds = roundStats.filter((r) => r.ok).length;
-  const related = results.filter((x) => x.relevant);
+  const relatedAll = results.filter((x) => x.relevant);
 
   // 判定「被搜索引擎拦截」：一轮都没拿到结果页，且错误里出现 302/验证码/超时
   const blocked = okRounds === 0;
@@ -1106,27 +1141,39 @@ async function runAddressSearch(area, opts = {}) {
       + '这不是「没有公司」——请先换个网络（切 4G/5G 再试），或过 10 分钟再点一次。'
     : '';
 
+  // ---- 片区收紧：不在指定片区的一律不进结果列表 ----
+  // 旧版只是把它们排在后面，用户看到的仍是「一大堆不是那个位置的公司」。
+  // 现在：指定了片区词（第四级区域/街道）时，只保留 inArea=true 的；
+  //      只选到区县时，区县内全部保留（这是用户明确的搜索范围）。
+  const hasAreaToken = !!(normalizeArea((geo && geo.area) || '').replace(
+    new RegExp([geo.province, geo.city, geo.county].filter(Boolean).join('|') || '$^', 'g'), ''
+  ).trim());
+  const inAreaList = hasAreaToken ? relatedAll.filter((x) => x.inArea) : relatedAll;
+  const outOfArea = relatedAll.length - inAreaList.length;
+
   return {
     area: areaLabel || String(area || ''),
     geo,
     searchedAt: new Date().toISOString(),
     queries: roundStats,
-    total: related.length,
+    total: inAreaList.length,
     rawTotal: results.length,
+    hasAreaToken,
+    outOfArea,
     blocked,
     blockHint,
     stats: {
-      A: related.filter((x) => x.level === 'A').length,
-      B: related.filter((x) => x.level === 'B').length,
-      C: related.filter((x) => x.level === 'C').length,
-      dropped: results.length - related.length,
-      inArea: related.filter((x) => x.inArea).length,
-      withPhone: related.filter((x) => x.phones.length).length,
-      withAddress: related.filter((x) => x.address).length,
+      A: inAreaList.filter((x) => x.level === 'A').length,
+      B: inAreaList.filter((x) => x.level === 'B').length,
+      C: inAreaList.filter((x) => x.level === 'C').length,
+      dropped: results.length - relatedAll.length,
+      inArea: inAreaList.filter((x) => x.inArea).length,
+      withPhone: inAreaList.filter((x) => x.phones.length).length,
+      withAddress: inAreaList.filter((x) => x.address).length,
       rounds: roundStats.length,
       okRounds,
     },
-    results: related,
+    results: inAreaList,
     dropped: results.filter((x) => !x.relevant).map((x) => ({ name: x.name, why: x.reasons[0] })),
   };
 }
@@ -2179,7 +2226,7 @@ async function doAddrSearch(addr, geoIn){
 function addrSearchView(){
   const r = S.searchResult;
   const busy = S.searchBusy;
-  const pickedCount = Object.keys(S.searchPicked||{}).filter(k=>S.searchPicked[k]).length;
+  // 勾选计数在下面按"真正显示出来的公司"算（见 pickedCountSafe）
 
   const head = `
   <div class="sheet-h">
@@ -2205,8 +2252,16 @@ function addrSearchView(){
 
   /* ---- 报告主体 ---- */
   const st = r.stats || {};
-  const list = r.results || [];
-  const allOn = list.length>0 && pickedCount===list.length;
+  // 库里已有的公司不再作为条目渲染（只报数量），否则每次检索都要翻一堆"已在库里"的噪声
+  // 注意：data-pick 用的是"渲染列表里的下标"，而 S.searchPicked 的 key 是原始 r.results 的下标，
+  // 所以这里必须同时记住原始下标 idx，否则勾选会错位到别的公司。
+  const listAll = r.results || [];
+  const list = listAll.map((x, idx) => ({ ...x, __idx: idx })).filter(x=>!x.dup);
+  const dupHidden = listAll.length - list.length;
+  const allOn = list.length>0 && list.every(x=>S.searchPicked[x.__idx]);
+  const anyOn = list.some(x=>S.searchPicked[x.__idx]);
+  // 勾选计数按"真正显示出来的公司"算，隐藏掉的不参与
+  const pickedCountSafe = list.filter(x=>S.searchPicked[x.__idx]).length;
 
   const metrics = `
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:18px">
@@ -2234,7 +2289,8 @@ function addrSearchView(){
       <p style="font-size:13px;color:var(--ink2);margin:6px 0 0;line-height:1.7">
         本次按条件搜索到 <b>${r.total}</b> 家公司，其中 A 级 ${st.A||0} 家、B 级 ${st.B||0} 家、C 级 ${st.C||0} 家；
         已排除 ${st.dropped||0} 家非眼镜主体。
-        ${r.dupCount ? `<br><b style="color:var(--brand-dk)">其中 ${r.dupCount} 家已在你的线索库里</b>（已灰掉、默认不勾选），真正新的 <b>${r.freshCount}</b> 家。` : ''}
+        ${dupHidden ? `<br><b style="color:var(--brand-dk)">另有 ${dupHidden} 家已在你的线索库里</b>，已从下方清单隐藏，不会重复出现。` : ''}
+        ${r.outOfArea ? `<br><span style="font-size:12px;color:var(--ink3)">已过滤 ${r.outOfArea} 家不在「${esc((r.geo&&r.geo.area)||r.area)}」范围内的公司。</span>` : ''}
         ${(r.expandedAreas||[]).length ? `<br><span style="font-size:12px;color:var(--ink3)">已向外扩展 ${r.expandRound} 波：${esc((r.expandedAreas||[]).slice(0,12).join('、'))}</span>` : ''}
         <br>
         <span style="font-size:12px;color:var(--ink3)">检索完成于 ${new Date(r.searchedAt).toLocaleString('zh-CN')}，共发起 ${st.rounds||0} 轮检索</span>
@@ -2242,17 +2298,16 @@ function addrSearchView(){
     </div>`;
 
   const rows = list.map((x,i)=>`
-    <div style="border:1px solid ${x.dup?'#E4E0DA':'var(--line)'};border-radius:12px;padding:12px;margin-top:10px;background:${x.dup?'#FAF8F5':'#fff'}">
+    <div style="border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px;background:#fff">
       <div style="display:flex;gap:10px;align-items:flex-start">
-        <input type="checkbox" data-pick="${i}" ${S.searchPicked[i]?'checked':''} ${x.dup?'disabled':''}
+        <input type="checkbox" data-pick="${x.__idx}" ${S.searchPicked[x.__idx]?'checked':''}
           style="width:20px;height:20px;margin-top:2px;flex:0 0 auto;accent-color:var(--brand)">
         <div style="flex:1;min-width:0">
-          <div style="font-size:14.5px;font-weight:600;line-height:1.4;color:${x.dup?'var(--ink3)':'inherit'}">${esc(x.name)}</div>
+          <div style="font-size:14.5px;font-weight:600;line-height:1.4">${esc(x.name)}</div>
           <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
-            ${x.dup?'<span style="font-size:11px;padding:2px 7px;border-radius:6px;background:#EFECE8;color:#7A7168">✓ 已在库里</span>':''}
             <span style="font-size:11px;padding:2px 7px;border-radius:6px;background:${x.level==='A'?'#E8F5E9':x.level==='B'?'#FFF4E5':'#F1EFEC'};color:${x.level==='A'?'#2E7D32':x.level==='B'?'#B26A00':'#6B635B'}">${x.level} 级</span>
-            <span style="font-size:11px;padding:2px 7px;border-radius:6px;background:${x.inArea?'#E8F5E9':'#F1EFEC'};color:${x.inArea?'#2E7D32':'#6B635B'}">${x.inArea?'在片区内':'全义乌'}</span>
-            <span style="font-size:11px;padding:2px 7px;border-radius:6px;background:#F1EFEC;color:#6B635B">命中 ${x.hits} 次</span>
+            <span style="font-size:11px;padding:2px 7px;border-radius:6px;background:#E8F5E9;color:#2E7D32">📍 命中 ${esc(x.areaHit||'本片区')}</span>
+            <span style="font-size:11px;padding:2px 7px;border-radius:6px;background:#F1EFEC;color:#6B635B">出现 ${x.hits} 次</span>
           </div>
           ${x.address?`<div style="font-size:12.5px;color:var(--ink2);margin-top:8px;line-height:1.6">📮 ${esc(x.address)}</div>`:`<div style="font-size:12px;color:var(--ink3);margin-top:8px">📮 地址未公开，需补</div>`}
           ${x.phones.length?`<div style="font-size:12.5px;color:var(--ink2);margin-top:3px">📞 ${esc(x.phones.join(' / '))}</div>`:''}
@@ -2287,9 +2342,9 @@ function addrSearchView(){
 
   const footer = list.length ? `
     <div style="display:flex;gap:8px;margin-top:16px">
-      <button class="btn ghost" id="btnPickAll" style="flex:0 0 auto;width:auto;padding:12px 16px">${allOn?'全不选':'全选'}</button>
-      <button class="btn" id="btnConfirmImport" style="flex:1" ${pickedCount?'':'disabled'}>
-        确认入库（${pickedCount} 家）
+      <button class="btn ghost" id="btnPickAll" style="flex:0 0 auto;width:auto;padding:12px 16px" data-allon="${pickedCountSafe===list.length&&list.length>0?'1':'0'}">${pickedCountSafe===list.length&&list.length>0?'全不选':'全选'}</button>
+      <button class="btn" id="btnConfirmImport" style="flex:1" ${pickedCountSafe?'':'disabled'}>
+        确认入库（${pickedCountSafe} 家）
       </button>
     </div>
     <button class="btn ghost" id="btnExpandSearch" style="width:100%;margin-top:8px" ${S.searchExpanding?'disabled':''}>
@@ -2420,14 +2475,25 @@ async function afterLogin(phone){
   await syncAdminFlag();
   await refresh();
 }
-/* 归属人的展示名：优先 owner_name，退化到手机号 */
+/* 归属人的展示名：优先 owner_name，退化到手机号
+   注意：详情页需要「昵称 + 号码」两段，所以这里只返回名字，
+   外面不要再拼一次 owner_phone，否则会变成「昵称 · 号码 · 号码」。 */
 function ownerLabel(l){
   const name = (l.owner_name||'').trim();
   const phone = (l.owner_phone||'').trim();
-  if(name && phone) return `${name}`;
   if(name) return name;
   if(phone) return phone;
   return '未知来源';
+}
+
+/* 「昵称 · 号码」合成展示（昵称和号码相同或只有其一时不会重复） */
+function ownerFull(l){
+  let name = (l.owner_name||'').trim();
+  const phone = (l.owner_phone||'').trim();
+  // 历史数据可能把号码存进了昵称字段：昵称本身就是一串数字时按号码处理，避免出现两个号码
+  if(name && /^[\d\s+\-]{7,}$/.test(name)) name = '';
+  if(name && phone && name !== phone) return `${name} · ${phone}`;
+  return name || phone || '未知来源';
 }
 
 function currentUid(){
@@ -2872,7 +2938,9 @@ function closeSheet(){
   const sh=$('#sheet');
   sh.classList.remove('on');
   $('#mask').classList.remove('on');
-  setTimeout(()=>{ if(!sh.classList.contains('on')) sh.innerHTML=''; },260);
+  // 清空时先清掉待执行的定时器，避免「快速关→再开」时旧定时器把新内容抹掉
+  clearTimeout(closeSheet._t);
+  closeSheet._t = setTimeout(()=>{ if(!sh.classList.contains('on')) sh.innerHTML=''; },260);
 }
 
 function leadForm(l={}, prefillArea=''){
@@ -3016,7 +3084,7 @@ function detailSheet(l){
       <div class="it"><span class="k">状态</span><span class="v">${esc(l.status||'待跟进')}</span></div>
       ${l.next_follow_at?`<div class="it"><span class="k">下次跟进</span><span class="v">${fmtDateTime(l.next_follow_at)}</span></div>`:''}
       ${l.source?`<div class="it"><span class="k">来源</span><span class="v" style="font-size:12.5px;color:var(--ink2)">${esc(l.source)}</span></div>`:''}
-      ${isSuperAdmin()?`<div class="it"><span class="k">录入人</span><span class="v" style="font-size:12.5px">${esc(ownerLabel(l))}${l.owner_phone?` · ${esc(l.owner_phone)}`:''}</span></div>`:''}
+      ${isSuperAdmin()?`<div class="it"><span class="k">录入人</span><span class="v" style="font-size:12.5px">${esc(ownerFull(l))}</span></div>`:''}
     </div>
 
     <div class="script-box">
@@ -3697,6 +3765,7 @@ document.addEventListener('click', async (e)=>{
     GEO_AUTO = false;
     S.searchAddr = '';
     openSheet(addrSearchView());
+    // 下面还有 pickEl 等分支，必须在这里收口，否则会顺延执行到别的逻辑
     return;
   }
 
@@ -3722,15 +3791,27 @@ document.addEventListener('click', async (e)=>{
     return;
   }
 
-  // 勾选 / 取消勾选
+  // 勾选 / 取消勾选（data-pick 存的是原始 r.results 下标）
   const pickEl = t.closest('[data-pick]');
   if(pickEl && pickEl.type === 'checkbox'){
     const i = pickEl.dataset.pick;
     S.searchPicked[i] = pickEl.checked;
     // 只刷新按钮上的数量，避免整页重绘把滚动位置弄丢
+    const all = S.searchResult?.results || [];
+    const shown = all.map((x,k)=>({x,k})).filter(o=>!o.x.dup);
+    const cnt = shown.filter(o=>S.searchPicked[o.k]).length;
     const btn = document.querySelector('#btnConfirmImport');
-    const cnt = Object.keys(S.searchPicked).filter(k=>S.searchPicked[k]).length;
-    if(btn){ btn.disabled = !cnt; btn.textContent = `确认入库（${cnt} 家）`; }
+    if(btn){
+      btn.disabled = !cnt;
+      btn.textContent = cnt ? `确认入库（${cnt} 家）` : '确认入库（先勾选）';
+    }
+    // 全选/全不选按钮的文案也要跟着变，否则会出现"明明全勾了还显示全选"
+    const pa = document.querySelector('#btnPickAll');
+    if(pa){
+      const nowAll = shown.length>0 && cnt===shown.length;
+      pa.dataset.allon = nowAll ? '1' : '0';
+      pa.textContent = nowAll ? '全不选' : '全选';
+    }
     return;
   }
 
@@ -3742,22 +3823,27 @@ document.addEventListener('click', async (e)=>{
     return;
   }
 
-  // 全选 / 全不选
+  // 全选 / 全不选（只对显示出来的、库里没有的公司生效）
   if(t.closest('#btnPickAll')){
-    const list = S.searchResult?.results || [];
-    const cnt = Object.keys(S.searchPicked).filter(k=>S.searchPicked[k]).length;
-    const allOn = list.length>0 && cnt===list.length;
+    const all = S.searchResult?.results || [];
+    const shown = all.map((x,k)=>k).filter(k=>!all[k].dup);
+    const allOn = shown.length>0 && shown.every(k=>S.searchPicked[k]);
     const next = {};
-    if(!allOn) list.forEach((x,i)=>{ next[i]=true; });
+    if(!allOn) shown.forEach(k=>{ next[k]=true; });
     S.searchPicked = next;
+    // 重绘 sheet 内容；scrollTop 会被重置，这里先记下来再还原
+    const bodyEl = document.querySelector('#sheet .sheet-b');
+    const keepTop = bodyEl ? bodyEl.scrollTop : 0;
     openSheet(addrSearchView());
+    const nb = document.querySelector('#sheet .sheet-b');
+    if(nb) nb.scrollTop = keepTop;
     return;
   }
 
   // 确认入库
   if(t.closest('#btnConfirmImport')){
-    const list = S.searchResult?.results || [];
-    const picked = list.filter((x,i)=>S.searchPicked[i]);
+    const all = S.searchResult?.results || [];
+    const picked = all.filter((x,i)=>S.searchPicked[i] && !x.dup);
     if(!picked.length){ toast('先勾选要入库的公司'); return; }
     const btn = t.closest('#btnConfirmImport');
     btn.disabled = true; btn.textContent = '正在入库…';
@@ -3897,7 +3983,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.6';
+const APP_VERSION = '1.4.7';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
