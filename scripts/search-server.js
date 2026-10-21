@@ -50,12 +50,19 @@ const server = http.createServer((req, res) => {
     req.on('data', (c) => { raw += c; });
     req.on('end', async () => {
       let area = '';
-      try { area = (JSON.parse(raw || '{}').area || '').trim(); } catch (_) {}
+      let geo = null;
+      try {
+        const body = JSON.parse(raw || '{}');
+        area = String(body.area || '').trim();
+        if (body.geo && typeof body.geo === 'object') geo = body.geo;
+      } catch (_) {}
+      // 允许只传 geo（选择器选了省市区但没填区域）
+      if (!area && geo) area = String(geo.area || geo.county || geo.city || geo.province || '').trim();
       if (!area) return send(res, 400, JSON.stringify({ error: '缺少 area' }));
       try {
         const t0 = Date.now();
-        const r = await runAddressSearch(area);
-        console.log(`[search] "${area}" → ${r.total} 家（${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+        const r = await runAddressSearch(area, geo ? { geo } : {});
+        console.log(`[search] "${area}"${geo ? ' geo=' + JSON.stringify(geo) : ''} → ${r.total} 家（${((Date.now() - t0) / 1000).toFixed(1)}s）`);
         send(res, 200, JSON.stringify(r));
       } catch (e) {
         console.error('[search] 失败', e);

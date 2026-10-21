@@ -90,8 +90,103 @@ function htmlToText(h) {
     .trim();
 }
 
-/* ---------------- 检索词生成 ---------------- */
-const CATEGORY_WORDS = ['眼镜', '太阳镜', '墨镜', '老花镜', '镜架', '光学眼镜', '眼镜配件'];
+/* ---------------- 地域上下文（支持全国任意省市县） ----------------
+   早期版本把"义乌"写死在正则和检索词里，导致：
+     1) 只能搜义乌，换任何地址都被强制加"义乌"前缀；
+     2) 结果过滤 /^义乌/ 把外地公司全丢掉；
+     3) 几个高频公司页面反复命中，无论搜哪儿都出现同一批。
+   这里把地域抽象成 GEO 上下文，由调用方按「省/市/县 + 区域」传入，
+   所有正则、检索词、片区判定都从 GEO 派生，不再有硬编码地名。 */
+const PROVINCE_SUFFIX = /(省|自治区|特别行政区)$/;
+const CITY_SUFFIX = /(市|自治州|地区|盟)$/;
+const COUNTY_SUFFIX = /(区|县|市|旗|区)$/;
+
+/* 从一段自由文本里猜出 省/市/县/区域。
+   做法：按「省 → 市 → 区县」顺序从字符串**开头**逐段剥掉，
+   剥不动的部分就是街道/园区/门牌（区域）。
+   这样不会出现"浙江省义乌市"被整体当成区县，也不会把"义乌市"的市误认成地级市。 */
+function guessGeo(text) {
+  const raw = String(text || '').trim();
+  const geo = { province: '', city: '', county: '', area: raw };
+  if (!raw) return geo;
+
+  let rest = raw;
+
+  // ① 省（开头位置才认，避免把区县里的字误当省）
+  const pm = rest.match(/^([\u4e00-\u9fa5]{2,10}?(?:省|自治区|特别行政区))/);
+  if (pm) { geo.province = pm[1]; rest = rest.slice(pm[1].length).trim(); }
+
+  // ② 市：连续的"XX市"最多取两个，倒数第二个是地级市、最后一个是县级市
+  const cityHits = [];
+  let m;
+  const cityRe = /^([\u4e00-\u9fa5]{2,8}?市)/;
+  while ((m = rest.match(cityRe))) {
+    cityHits.push(m[1]);
+    rest = rest.slice(m[1].length).trim();
+    if (cityHits.length >= 2) break;
+  }
+  if (cityHits.length === 2) {
+    geo.city = cityHits[0];          // 地级市
+    geo.county = cityHits[1];        // 县级市
+  } else if (cityHits.length === 1) {
+    geo.city = cityHits[0];
+  }
+
+  // ③ 区/县：紧跟在市后面再剥一层
+  const cm = rest.match(/^([\u4e00-\u9fa5]{2,8}?(?:区|县|旗))/);
+  if (cm) {
+    if (geo.county) {
+      // 已经有县级市了，再出现"区"说明前面那个是地级市本身
+      geo.city = geo.county;
+      geo.county = cm[1];
+    } else {
+      geo.county = cm[1];
+    }
+    rest = rest.slice(cm[1].length).trim();
+  }
+
+  geo.area = rest.replace(/^[\s,，、·]+|[\s,，、·]+$/g, '') || '';
+  return geo;
+}
+
+/* 把 省/市/县/区域 拼成检索用的地名串（由精确到宽松） */
+function geoStrings(geo) {
+  const { province, city, county, area } = geo || {};
+  const out = { full: '', countyWide: '', cityWide: '', provinceWide: '' };
+
+  const parts = [];
+  if (city) parts.push(city);
+  else if (province) parts.push(province);
+  if (county && county !== city) parts.push(county);
+  if (area && area !== county && area !== city) parts.push(area);
+  out.full = parts.join(' ').trim();
+
+  const cp = [];
+  if (city) cp.push(city);
+  if (county && county !== city) cp.push(county);
+  out.countyWide = cp.join(' ') || out.full;
+
+  out.cityWide = city || (province + (county || '')).trim();
+  out.provinceWide = province || city || '';
+  return out;
+}
+
+/* 地域"身份词"：公司名/地址里必须出现其中之一，才算落在本地（替代原来的 /^义乌/） */
+function regionIdentityTokens(geo) {
+  const { city, county, area } = geo || {};
+  const t = new Set();
+  [city, county].filter(Boolean).forEach((x) => {
+    t.add(x);
+    // "义乌市" → "义乌"，"杭州市" → "杭州"，用于匹配省略"市"的写法
+    t.add(x.replace(/(市|区|县|省)$/, ''));
+  });
+  // 只给了"义乌""丹阳"这种不带后缀的地名时，就用它本身当身份词
+  if (!t.size && area) {
+    const a = String(area).trim();
+    if (a.length >= 2 && a.length <= 8) t.add(a);
+  }
+  return [...t].filter((x) => x && x.length >= 2);
+}
 
 /* 地址规范化：留下真正能定位的词，去掉"附近/周边/一带"这类对检索无用的词 */
 function normalizeArea(area) {
@@ -102,31 +197,36 @@ function normalizeArea(area) {
     .trim();
 }
 
-/* 分三级生成检索词：具体片区 → 去掉门牌只剩街道 → 整个义乌
-   搜索引擎对长串组合词命中很差，必须逐级放宽，否则会一条都搜不到。 */
-function buildQueryTiers(area) {
-  const base = normalizeArea(area);
-  const city = /义乌/.test(base) ? '' : '义乌 ';
-  const full = (city + base).trim();
+/* ---------------- 检索词生成 ---------------- */
+const CATEGORY_WORDS = ['眼镜', '太阳镜', '墨镜', '老花镜', '镜架', '光学眼镜', '眼镜配件'];
 
-  // 街道/园区级别的短词：只保留最有辨识度的 1~2 段
-  const tokens = full.split(/\s+/).filter(Boolean);
-  const shortArea = tokens.length > 2 ? tokens.slice(0, 2).join(' ') : full;
+/* 分三级生成检索词：具体区域 → 区县全境 → 全市（还不够再放开到全省）
+   搜索引擎对长串组合词命中很差，必须逐级放宽，否则会一条都搜不到。
+   geo 可以是字符串（自动识别）或 {province,city,county,area} */
+function buildQueryTiers(area, geoIn) {
+  const geo = geoIn || (typeof area === 'object' ? area : guessGeo(normalizeArea(area)));
+  const g = geoStrings(geo);
+
+  // 区域级短词：只保留最有辨识度的 1~2 段
+  const tokens = g.full.split(/\s+/).filter(Boolean);
+  const shortArea = tokens.length > 2 ? tokens.slice(0, 2).join(' ') : g.full;
 
   const cats = ['眼镜有限公司', '太阳镜 贸易有限公司', '老花镜 墨镜 商贸有限公司'];
-  const tiers = [
-    { tier: '片区', queries: cats.map((c) => `${full} ${c}`) },
-    { tier: '街道', queries: cats.map((c) => `${shortArea} ${c}`) },
-    { tier: '全市', queries: cats.map((c) => `义乌 ${c}`) },
-  ];
+  const mk = (prefix, tierName) => ({ tier: tierName, queries: cats.map((c) => `${prefix} ${c}`.trim()) });
+
+  const tiers = [mk(g.full || g.cityWide, '区域')];
+  if (g.countyWide && g.countyWide !== g.full) tiers.push(mk(g.countyWide, '区县'));
+  if (g.cityWide && g.cityWide !== g.countyWide) tiers.push(mk(g.cityWide, '全市'));
+  if (g.provinceWide && g.provinceWide !== g.cityWide) tiers.push(mk(g.provinceWide, '全省'));
+
   return tiers
     .map((t) => ({ tier: t.tier, queries: [...new Set(t.queries)] }))
     .filter((t, i, arr) => i === 0 || t.queries.join('|') !== arr[i - 1].queries.join('|'));
 }
 
-function buildQueries(area) {
+function buildQueries(area, geoIn) {
   const out = [];
-  buildQueryTiers(area).forEach((t) => t.queries.forEach((q) => out.push(q)));
+  buildQueryTiers(area, geoIn).forEach((t) => t.queries.forEach((q) => out.push(q)));
   return [...new Set(out)];
 }
 
@@ -137,30 +237,35 @@ const NAME_PREFIX_NOISE = /^(阿里巴巴|企查查|天眼查|爱企查|百度�
 function cleanName(raw) {
   let s = String(raw || '').trim();
   if (!s) return '';
-  // 剥前缀：只要出现"义乌"，就从"义乌"开始截
-  const idx = s.indexOf('义乌');
+  // 剥前缀：从第一个"带行政区划的公司名"位置开始截（不再只认义乌）
+  const idx = s.search(/[\u4e00-\u9fa5]{2,12}(?:省|市|区|县)/);
   if (idx > 0) s = s.slice(idx);
   s = s.replace(NAME_PREFIX_NOISE, '');
   s = s.replace(/^[^\u4e00-\u9fa5]+/, '');
   s = s.replace(/[，,。；;：:、\s]+$/, '');
   // 必须以"有限公司/有限责任公司"结尾
   if (!/(有限公司|有限责任公司)$/.test(s)) return '';
-  if (s.length > 28) return '';
-  // 剥离"义乌市"后必须还有实际字号
-  const core = s.replace(/^义乌市?/, '').replace(/(有限公司|有限责任公司)$/, '');
+  if (s.length > 30) return '';
+  // 剥掉行政区划前缀后必须还有实际字号
+  const core = s
+    .replace(/^[\u4e00-\u9fa5]{2,8}?(?:省|自治区)/, '')
+    .replace(/^[\u4e00-\u9fa5]{2,8}市/, '')
+    .replace(/^[\u4e00-\u9fa5]{2,8}(?:区|县)/, '')
+    .replace(/(有限公司|有限责任公司)$/, '');
   if (core.length < 2) return '';
   // 纯泛词（贸易/商贸/电子商务…）不算有效字号
   if (/^(贸易|商贸|电子商务|科技|实业|供应链|进出口|百货)+$/.test(core)) return '';
-  // 同一家公司有时会被写成"义乌市北苑XX有限公司"这种带地名的，保留（DB 里确实存在）
   return s;
 }
 
-const NAME_RE = /义乌[市]?[\u4e00-\u9fa5A-Za-z0-9]{1,20}(?:有限公司|有限责任公司)/g;
+/* 公司名：任意行政区划前缀 + 字号 + 有限公司
+   （原先是 /义乌[市]?/ 写死，导致外地公司一律抽不出来） */
+const NAME_RE = /[\u4e00-\u9fa5]{2,12}(?:有限公司|有限责任公司)/g;
 
-// 带义乌前缀的标准地址
-const ADDR_RE = /义乌[市]?[\u4e00-\u9fa5A-Za-z0-9（）()]{0,12}(?:路|街|道|大道|小区|园区|市场|广场|大厦|商厦|商城|城|村|镇)[\u4e00-\u9fa5A-Za-z0-9（）()\-]{0,30}?(?:号|栋|幢|楼|室|层|单元|区)[\u4e00-\u9fa5A-Za-z0-9（）()\-]{0,22}/g;
-// 360/神马摘要里常省略“义乌”二字，直接从街道写起（如“后宅街道神州路308号上洪电商园5楼”）
-const ADDR_RE_BARE = /(?:北苑|后宅|江东|稠城|稠江|福田|廿三里|城西|佛堂|苏溪|上溪|大陈|义亭|赤岸|国际商贸城)[\u4e00-\u9fa5A-Za-z0-9]{0,10}(?:街道|路|街|道|小区|园区|市场|商城)[\u4e00-\u9fa5A-Za-z0-9（）()\-]{0,26}?(?:号|栋|幢|楼|室|层|单元)[\u4e00-\u9fa5A-Za-z0-9（）()\-]{0,20}/g;
+// 带行政区划前缀的标准地址（通用化：不再要求"义乌"开头）
+const ADDR_RE = /[\u4e00-\u9fa5]{2,12}(?:省|市|区|县)[\u4e00-\u9fa5A-Za-z0-9（）()]{0,14}(?:路|街|道|大道|小区|园区|市场|广场|大厦|商厦|商城|城|村|镇)[\u4e00-\u9fa5A-Za-z0-9（）()\-]{0,30}?(?:号|栋|幢|楼|室|层|单元|区)/g;
+// 摘要里常省略行政区划，直接从街道写起（如"后宅街道神州路308号上洪电商园5楼"）
+const ADDR_RE_BARE = /[\u4e00-\u9fa5]{2,8}(?:街道|镇|路|街|道|小区|园区|市场|商城)[\u4e00-\u9fa5A-Za-z0-9（）()\-]{0,26}?(?:号|栋|幢|楼|室|层|单元)[\u4e00-\u9fa5A-Za-z0-9（）()\-]{0,20}/g;
 
 const FACTORY_WORDS = /制造|生产加工|工厂|车间|产线|模具加工|自产自销|工厂店|实业有限公司/;
 
@@ -293,9 +398,14 @@ function resolvePhones(items) {
   return items;
 }
 
-/* 同一家公司在不同页被写成「义乌市X」和「义乌X」时合并成一条 */
+/* 同一家公司在不同页被写成「义乌市X」和「义乌X」时合并成一条
+   （行政区划前缀通用化，不再只认义乌） */
 function normalizeNameVariants(list) {
-  const key = (n) => n.replace(/^义乌市?/, '').replace(/(有限公司|有限责任公司)$/, '');
+  const key = (n) => n
+    .replace(/^[\u4e00-\u9fa5]{2,8}?(?:省|自治区)/, '')
+    .replace(/^[\u4e00-\u9fa5]{2,8}市/, '')
+    .replace(/^[\u4e00-\u9fa5]{2,8}(?:区|县)/, '')
+    .replace(/(有限公司|有限责任公司)$/, '');
   const groups = new Map();
   list.forEach((it) => {
     const k = key(it.name);
@@ -305,8 +415,8 @@ function normalizeNameVariants(list) {
   const out = [];
   groups.forEach((arr) => {
     if (arr.length === 1) { out.push(arr[0]); return; }
-    // 取"义乌市"前缀的作为正式名（更规范），其余字段合并
-    const main = arr.find((x) => /^义乌市/.test(x.name)) || arr[0];
+    // 取名字最长的作为正式名（通常带完整行政区划，更规范）
+    const main = arr.slice().sort((a, b) => b.name.length - a.name.length)[0];
     const merged = { ...main };
     arr.forEach((x) => {
       merged.hits = (merged.hits || 1) + (x.hits || 1) - 1;
@@ -483,10 +593,14 @@ function extractByBlocks(snippets, query, target = '') {
   return out;
 }
 
-/* 地址归片：判断这条线索是否真的落在用户输入的片区里 */
-function areaMatchScore(item, area) {
-  const base = normalizeArea(area).replace(/义乌/g, ' ').trim();
-  const tokens = base.split(/\s+/).filter((x) => x.length >= 2);
+/* 地址归片：判断这条线索是否真的落在用户指定的区域里 */
+function areaMatchScore(item, area, geoIn) {
+  const geo = geoIn || (typeof area === 'object' ? area : guessGeo(normalizeArea(area)));
+  const base = normalizeArea(geo.area || '');
+  const drop = [geo.province, geo.city, geo.county].filter(Boolean);
+  let rest = base;
+  drop.forEach((d) => { rest = rest.split(d).join(' '); });
+  const tokens = rest.split(/\s+/).filter((x) => x.length >= 2);
   const blob = [item.name, ...(item.addrs || []), item.snippet || ''].join(' ');
   if (!tokens.length) return { inArea: true, matched: [] };
   const matched = tokens.filter((t) => blob.includes(t));
@@ -510,8 +624,13 @@ async function enrichDetails(results, limit = 10) {
       // eslint-disable-next-line no-await-in-loop
       const s = await searchOnce(q, { minNames: 1 });
       if (!s.ok) continue;
-      // 只看这家公司自己那块上下文
-      const at = s.text.indexOf(r.name.replace(/^义乌市?/, ''));
+      // 只看这家公司自己那块上下文（去掉行政区划前缀再定位，各家写法不一）
+      const bare = r.name
+        .replace(/^[\u4e00-\u9fa5]{2,8}?(?:省|自治区)/, '')
+        .replace(/^[\u4e00-\u9fa5]{2,8}市/, '')
+        .replace(/^[\u4e00-\u9fa5]{2,8}(?:区|县)/, '');
+      let at = s.text.indexOf(bare);
+      if (at < 0) at = s.text.indexOf(r.name);
       const chunk = at >= 0 ? s.text.slice(Math.max(0, at - 40), at + 700) : '';
       if (!chunk) continue;
 
@@ -539,9 +658,16 @@ async function enrichDetails(results, limit = 10) {
   return results;
 }
 
-/* ---------------- 主入口 ---------------- */
+/* ---------------- 主入口 ----------------
+   area 可以是字符串（自动识别省市区），也可以是 {province,city,county,area} 对象。
+   传对象时识别结果更准（选择器选的），传字符串会走 guessGeo 自动识别。 */
 async function runAddressSearch(area, opts = {}) {
-  const tiers = buildQueryTiers(area);
+  // opts.geo：选择器传来的 {province,city,county,area}，优先于自动识别
+  const geo = opts.geo
+    ? { province: opts.geo.province||'', city: opts.geo.city||'', county: opts.geo.county||'', area: opts.geo.area||'' }
+    : ((typeof area === 'object' && area) ? area : guessGeo(normalizeArea(area)));
+  const areaLabel = geoStrings(geo).full || geo.area || String(area || '');
+  const tiers = buildQueryTiers(area, geo);
   const rounds = [];
   const all = [];
 
@@ -566,15 +692,22 @@ async function runAddressSearch(area, opts = {}) {
 
   let merged = mergeByName(all);
 
-  // 只要义乌主体（避免外地公司混进来）
-  merged = merged.filter((x) => /^义乌/.test(x.name));
+  // 地域过滤：公司名或地址里必须出现本地的市/区县身份词，
+  // 避免别的城市的公司混进来（原来写死 /^义乌/，现在按 geo 派生）
+  const idTokens = regionIdentityTokens(geo);
+  if (idTokens.length) {
+    merged = merged.filter((x) => {
+      const blob = [x.name, ...(x.addrs || []), x.snippet || ''].join(' ');
+      return idTokens.some((t) => blob.includes(t));
+    });
+  }
   // 同一家公司的两种写法合并；串台电话作废
   merged = normalizeNameVariants(merged);
   merged = resolvePhones(merged);
 
   const results = merged.map((it) => {
-    const j = judge(it, area);
-    const am = areaMatchScore(it, area);
+    const j = judge(it, areaLabel);
+    const am = areaMatchScore(it, area, geo);
     return {
       name: it.name,
       address: it.addrs[0] || '',
@@ -592,7 +725,7 @@ async function runAddressSearch(area, opts = {}) {
       inArea: am.inArea,
       areaMatched: am.matched,
       reasons: j.reasons,
-      lead: toLeadPayload(it, area, j),
+      lead: toLeadPayload(it, areaLabel, j),
     };
   });
 
@@ -621,7 +754,8 @@ async function runAddressSearch(area, opts = {}) {
     : '';
 
   return {
-    area,
+    area: areaLabel || String(area || ''),
+    geo,
     searchedAt: new Date().toISOString(),
     queries: roundStats,
     total: related.length,
@@ -644,4 +778,7 @@ async function runAddressSearch(area, opts = {}) {
   };
 }
 
-module.exports = { runAddressSearch, buildQueries, buildQueryTiers, extractFromText, extractByBlocks, cleanName, judge };
+module.exports = {
+  runAddressSearch, buildQueries, buildQueryTiers, extractFromText, extractByBlocks,
+  cleanName, judge, guessGeo, geoStrings, regionIdentityTokens,
+};

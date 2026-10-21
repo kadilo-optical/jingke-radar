@@ -1,6 +1,6 @@
 {
-  "version": "1.4.5",
-  "note": "检索报告自动标出已在库里的公司（灰掉不勾选）；新增「向外扩展搜索」按钮（相邻片区→全义乌→全市，只收新公司）；旧财税话术已清除并有明确提示",
+  "version": "1.4.6",
+  "note": "地址改为省/市/区县/区域四级滑动选择；可直接粘贴整段地址自动识别四级；线索表单地址同步升级；老数据无需迁移",
   "apkUrl": "https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk",
   "releasedAt": "2026-10-20"
 }
