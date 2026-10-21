@@ -7,6 +7,10 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const WWW = path.join(ROOT, 'www');
 const FILES = ['index.html', 'public-config.js', 'sdk.js'];
+// 网页版发布升级为 Node 服务（静态页 + /api/addr-search 检索接口一体），
+// 这三个文件会一起拷进 www/，发布平台检测到 package.json 就用 node 启动
+const SITE_FILES = ['server.js', 'addr-search.js', 'package.json'];
+const SITE_DIR = path.join(ROOT, 'site');
 const verFile = path.join(ROOT, 'version.json');
 if (!fs.existsSync(verFile)) {
   console.error('[sync] 缺少 version.json');
@@ -45,6 +49,17 @@ for (const f of FILES) {
 }
 
 console.log(`[sync] 完成 → ${WWW}`);
+
+// 服务端部署文件（见 site/ 目录说明）
+for (const f of SITE_FILES) {
+  const src = path.join(SITE_DIR, f);
+  if (!fs.existsSync(src)) {
+    console.error(`[sync] 缺少服务端文件: ${f}`);
+    process.exit(1);
+  }
+  fs.copyFileSync(src, path.join(WWW, f));
+  console.log(`[sync] server/${f}  ${(fs.statSync(src).size / 1024).toFixed(1)} KB`);
+}
 
 // 最后一步：把 sdk.js 内联进 www/index.html，让 App 里的页面成为单文件自包含版本。
 // 这样 WebView 就算文件路径解析异常、或者完全离线，也不会因为拿不到 sdk.js 而白屏。

@@ -946,15 +946,7 @@ function extractByBlocks(snippets, query, target = '') {
   return out;
 }
 
-/* 地址归片：判断这条线索是否真的落在用户指定的区域里
-   ------------------------------------------------------------
-   旧版只要「公司名/地址/摘要」里出现过片区词就算在片区内，
-   但搜索结果页的摘要常带"推荐附近公司"等噪声，导致外地公司也被判进片区。
-   新版分三档打分，并且**不看摘要**（摘要最容易误导）：
-     2 分 = 地址里明确出现片区词（最可信）
-     1 分 = 公司名里出现片区词（次可信）
-     0 分 = 只有摘要提到，或完全没提到 → 不算在片区
-   同时排除明显在外地的（地址里有别的市/区县身份词）。 */
+/* 地址归片：判断这条线索是否真的落在用户指定的区域里 */
 function areaMatchScore(item, area, geoIn) {
   const geo = geoIn || (typeof area === 'object' ? area : guessGeo(normalizeArea(area)));
   const base = normalizeArea(geo.area || '');
@@ -962,34 +954,10 @@ function areaMatchScore(item, area, geoIn) {
   let rest = base;
   drop.forEach((d) => { rest = rest.split(d).join(' '); });
   const tokens = rest.split(/\s+/).filter((x) => x.length >= 2);
-  const addrs = (item.addrs || []).join(' ');
-  const name = item.name || '';
-  const snippet = item.snippet || '';
-  if (!tokens.length) return { inArea: true, matched: [], score: 2 };
-
-  const addrMatched = tokens.filter((t) => addrs.includes(t));
-  const nameMatched = tokens.filter((t) => name.includes(t));
-  const anyMatched = [...new Set([...addrMatched, ...nameMatched])];
-
-  let score = 0;
-  if (addrMatched.length) score = 2;
-  else if (nameMatched.length) score = 1;
-
-  // 有地址且地址里出现了"别的城市"的市/区县名，且完全没提本片区 → 明确判为不在片区
-  if (!score && addrs) {
-    const FOREIGN = /(杭州市|宁波市|温州市|台州市|绍兴市|嘉兴市|湖州市|丽水市|衢州市|舟山市|苏州市|无锡市|南京市|常州市|广州市|深圳市|东莞市|佛山市|泉州市|厦门市|福州市|青岛市|济南市|郑州市|武汉市|成都市|长沙市|合肥市|南昌市|西安市|沈阳市|大连市)/g;
-    const foreignHits = (addrs.match(FOREIGN) || []);
-    const isLocal = foreignHits.length === 0
-      || (geo.city && foreignHits.every((f) => f === geo.city))
-      || (geo.county && addrs.includes(geo.county));
-    if (!isLocal) return { inArea: false, matched: [], score: 0, foreign: true };
-  }
-
-  return {
-    inArea: score >= 1,
-    matched: score ? anyMatched : tokens.filter((t) => snippet.includes(t)),
-    score,
-  };
+  const blob = [item.name, ...(item.addrs || []), item.snippet || ''].join(' ');
+  if (!tokens.length) return { inArea: true, matched: [] };
+  const matched = tokens.filter((t) => blob.includes(t));
+  return { inArea: matched.length > 0, matched };
 }
 
 /* 第二轮：对已确认的义乌眼镜公司逐个补地址和电话。
@@ -1108,14 +1076,11 @@ async function runAddressSearch(area, opts = {}) {
       level: j.level,
       relevant: j.relevant,
       inArea: am.inArea,
-      areaScore: am.score || 0,
       areaMatched: am.matched,
       reasons: j.reasons,
       lead: toLeadPayload(it, areaLabel, j),
     };
   });
-  // 把命中的片区词挂到结果上，报告里能直接显示"凭哪个词认定了它在片区内"
-  results.forEach((x) => { x.areaHit = (x.areaMatched || []).join('、'); });
 
   // 第二轮：补地址和电话（只对相关的做，最多 10 家，避免耗时过长）
   if (opts.enrich !== false) {
@@ -1132,7 +1097,7 @@ async function runAddressSearch(area, opts = {}) {
 
   const roundStats = rounds.map((r) => ({ tier: r.tier, query: r.query, ok: r.ok, via: r.via, err: r.err, found: r.found }));
   const okRounds = roundStats.filter((r) => r.ok).length;
-  const relatedAll = results.filter((x) => x.relevant);
+  const related = results.filter((x) => x.relevant);
 
   // 判定「被搜索引擎拦截」：一轮都没拿到结果页，且错误里出现 302/验证码/超时
   const blocked = okRounds === 0;
@@ -1141,39 +1106,27 @@ async function runAddressSearch(area, opts = {}) {
       + '这不是「没有公司」——请先换个网络（切 4G/5G 再试），或过 10 分钟再点一次。'
     : '';
 
-  // ---- 片区收紧：不在指定片区的一律不进结果列表 ----
-  // 旧版只是把它们排在后面，用户看到的仍是「一大堆不是那个位置的公司」。
-  // 现在：指定了片区词（第四级区域/街道）时，只保留 inArea=true 的；
-  //      只选到区县时，区县内全部保留（这是用户明确的搜索范围）。
-  const hasAreaToken = !!(normalizeArea((geo && geo.area) || '').replace(
-    new RegExp([geo.province, geo.city, geo.county].filter(Boolean).join('|') || '$^', 'g'), ''
-  ).trim());
-  const inAreaList = hasAreaToken ? relatedAll.filter((x) => x.inArea) : relatedAll;
-  const outOfArea = relatedAll.length - inAreaList.length;
-
   return {
     area: areaLabel || String(area || ''),
     geo,
     searchedAt: new Date().toISOString(),
     queries: roundStats,
-    total: inAreaList.length,
+    total: related.length,
     rawTotal: results.length,
-    hasAreaToken,
-    outOfArea,
     blocked,
     blockHint,
     stats: {
-      A: inAreaList.filter((x) => x.level === 'A').length,
-      B: inAreaList.filter((x) => x.level === 'B').length,
-      C: inAreaList.filter((x) => x.level === 'C').length,
-      dropped: results.length - relatedAll.length,
-      inArea: inAreaList.filter((x) => x.inArea).length,
-      withPhone: inAreaList.filter((x) => x.phones.length).length,
-      withAddress: inAreaList.filter((x) => x.address).length,
+      A: related.filter((x) => x.level === 'A').length,
+      B: related.filter((x) => x.level === 'B').length,
+      C: related.filter((x) => x.level === 'C').length,
+      dropped: results.length - related.length,
+      inArea: related.filter((x) => x.inArea).length,
+      withPhone: related.filter((x) => x.phones.length).length,
+      withAddress: related.filter((x) => x.address).length,
       rounds: roundStats.length,
       okRounds,
     },
-    results: inAreaList,
+    results: related,
     dropped: results.filter((x) => !x.relevant).map((x) => ({ name: x.name, why: x.reasons[0] })),
   };
 }
@@ -1222,6 +1175,9 @@ const S = {
   searchPicked: {},   // 报告里勾选要入库的公司下标
   searchStage: '',    // 检索进度提示
   loginMode: 'pwd',   // 'pwd' | 'otp'
+  selMode: false,     // 线索库批量管理模式
+  selIds: {},         // 批量模式已选的线索 id
+  batchBusy: false,   // 批量删除进行中
 };
 
 /* ---------- 7 天免密自动登录 ----------
@@ -2685,8 +2641,27 @@ function leadsView(){
   </button>
   <div class="tabs">
     ${chips.map(([k,l])=>`<button class="chip ${S.filter===k?'on':''}" data-f="${k}">${l}</button>`).join('')}
+    <button class="chip ${S.selMode?'on':''}" id="btnSelMode" style="margin-left:auto;flex:0 0 auto">${S.selMode?'退出管理':'批量管理'}</button>
   </div>
+  ${S.selMode?batchBarHtml(arr):''}
   ${leadsListHtml(arr)}`;
+}
+
+/* 批量管理操作条：全选 / 批量删除 / 取消 */
+function batchBarHtml(arr){
+  const ids = arr.map(l=>String(l.id));
+  const selN = ids.filter(k=>S.selIds && S.selIds[k]).length;
+  const allOn = ids.length>0 && selN===ids.length;
+  return `
+  <div style="display:flex;gap:8px;margin:0 16px 10px;align-items:center;background:var(--brand-lt);
+    border:1px solid var(--brand);border-radius:12px;padding:10px 12px">
+    <span style="font-size:12.5px;color:var(--ink2);flex:1">已选 <b style="color:var(--brand-dk)">${selN}</b> / ${ids.length} 家</span>
+    <button class="btn ghost" id="btnSelAll" style="width:auto;padding:8px 14px;font-size:13px">${allOn?'全不选':'全选'}</button>
+    <button class="btn" id="btnBatchDel" style="width:auto;padding:8px 14px;font-size:13px"
+      ${selN?'':'disabled'} ${S.batchBusy?'disabled':''}>
+      ${S.batchBusy?'删除中…':'🗑 删除'+(selN?`（${selN}）`:'')}
+    </button>
+  </div>`;
 }
 
 /* 列表分两段：未查看（正常显示） + 已查看（可折叠，默认收起，记住上次选择） */
@@ -2755,6 +2730,11 @@ function cardView(l){
     }
   }
   return `<div class="card" data-id="${l.id}">
+    ${S.selMode?`<label style="display:flex;align-items:center;gap:8px;padding:2px 2px 8px;border-bottom:1px dashed var(--line);margin-bottom:8px;cursor:pointer">
+      <input type="checkbox" data-sel="${l.id}" ${S.selIds&&S.selIds[String(l.id)]?'checked':''}
+        style="width:19px;height:19px;accent-color:var(--brand)">
+      <span style="font-size:12px;color:var(--ink3)">选中这条</span>
+    </label>`:''}
     <div class="card-head">
       <div class="co">${esc(l.company||l.shop_name||'未命名')}</div>
       <span class="badge ${grade}">${grade}</span>
@@ -3244,6 +3224,62 @@ document.addEventListener('click', async (e)=>{
     const id = ro.dataset.remindOpen;
     const lead = S.leads.find(x=>String(x.id)===String(id));
     if(lead){ closeSheet(); setTimeout(()=>openDetail(lead), 250); }
+    return;
+  }
+
+  /* ---------- 批量管理（多选 / 批量删除） ---------- */
+  // 进入 / 退出批量管理模式
+  if(t.closest('#btnSelMode')){
+    if(S.selMode){ S.selMode=false; S.selIds={}; }
+    else { S.selMode=true; S.selIds={}; }
+    render();
+    return;
+  }
+  // 勾选某一条
+  const selEl = t.closest('[data-sel]');
+  if(selEl && selEl.type==='checkbox'){
+    const k=String(selEl.dataset.sel);
+    S.selIds = S.selIds || {};
+    if(selEl.checked) S.selIds[k]=true; else delete S.selIds[k];
+    // 只刷新操作条上的计数，不整页重绘（避免勾选状态丢失/滚动跳）
+    const bar=[...document.querySelectorAll('#btnBatchDel')].pop();
+    const all=document.querySelectorAll('[data-sel]');
+    let n=0; all.forEach(el=>{ if(el.checked) n++; });
+    if(bar){
+      bar.disabled = !n || S.batchBusy;
+      bar.textContent = S.batchBusy ? '删除中…' : '🗑 删除'+(n?`（${n}）`:'');
+    }
+    return;
+  }
+  // 全选 / 全不选（只作用于当前筛选下显示出来的线索）
+  if(t.closest('#btnSelAll')){
+    const ids=[...document.querySelectorAll('[data-sel]')].map(el=>String(el.dataset.sel));
+    const allOn = ids.length>0 && ids.every(k=>S.selIds && S.selIds[k]);
+    S.selIds = {};
+    if(!allOn) ids.forEach(k=>{ S.selIds[k]=true; });
+    render();
+    return;
+  }
+  // 批量删除
+  if(t.closest('#btnBatchDel')){
+    const ids=Object.keys(S.selIds||{}).filter(k=>S.selIds[k]);
+    if(!ids.length){ toast('先勾选要删除的线索'); return; }
+    if(!confirm(`确定删除选中的 ${ids.length} 条线索？\n\n这些线索和它们的跟进记录会一起删掉，不能恢复。`)) return;
+    const btn=t.closest('#btnBatchDel');
+    btn.disabled=true; btn.textContent='删除中…';
+    S.batchBusy=true;
+    let ok=0, fail=0;
+    for(const id of ids){
+      try{ if(await delLead(id)) ok++; else fail++; }
+      catch(_){ fail++; }
+    }
+    S.batchBusy=false;
+    S.selIds={};
+    S.selMode=false;
+    await refresh();
+    let msg=`已删除 ${ok} 条`;
+    if(fail) msg+=`，失败 ${fail} 条（无权限或已被删）`;
+    toast(msg, 3200);
     return;
   }
 
@@ -3948,13 +3984,21 @@ document.addEventListener('click', async (e)=>{
   }
 });
 
-// card tap → detail
+// card tap → detail（批量管理模式下：点卡片 = 切换选中）
 document.addEventListener('click',(e)=>{
   const card=e.target.closest('.card');
   if(!card) return;
-  if(e.target.closest('button')) return;
+  if(e.target.closest('button')||e.target.closest('[data-sel]')) return;
   const l=S.leads.find(x=>String(x.id)===card.dataset.id);
-  if(l) openDetail(l);
+  if(!l) return;
+  if(S.selMode){
+    const k=String(l.id);
+    S.selIds = S.selIds || {};
+    if(S.selIds[k]) delete S.selIds[k]; else S.selIds[k]=true;
+    render();
+    return;
+  }
+  openDetail(l);
 });
 
 function curLead(){
@@ -4040,7 +4084,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.8';
+const APP_VERSION = '1.4.9';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
