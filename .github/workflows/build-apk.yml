@@ -51,6 +51,21 @@ jobs:
       - name: Capacitor sync
         run: npx cap sync android
 
+      # 修复：Capacitor 生成的安卓工程默认 versionName 是 "1.0"，
+      # 系统安装界面/应用信息里显示的版本就一直是 1.0。
+      # 这里把 version.json 的版本号写进 build.gradle，让 APK 本身带真实版本。
+      - name: 写入版本号（versionName / versionCode）
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          MAJOR=$(echo "$V" | cut -d. -f1)
+          MINOR=$(echo "$V" | cut -d. -f2)
+          PATCH=$(echo "$V" | cut -d. -f3)
+          CODE=$((MAJOR*1000000 + MINOR*1000 + PATCH))
+          sed -i "s/versionCode [0-9]*/versionCode $CODE/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"$V\"/" android/app/build.gradle
+          echo "versionName=$V versionCode=$CODE"
+          grep -n "versionCode\|versionName" android/app/build.gradle
+
       - name: 确认应用名与版本
         run: |
           cat android/app/src/main/res/values/strings.xml
