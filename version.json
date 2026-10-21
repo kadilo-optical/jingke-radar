@@ -1,6 +1,6 @@
 {
-  "version": "1.4.7",
-  "note": "按地址找公司全面收紧：片区外的公司不再显示；库里已有的公司直接从清单里隐藏（只报数量）；认定依据改成只看地址/公司名，不再被搜索摘要带偏；录入人改为「昵称 · 号码」显示，历史脏数据不再出现两个号码",
+  "version": "1.4.8",
+  "note": "修复：线索库「已查看折叠区」消失的问题——已查看记录原来只存手机本地，清数据/重装/换设备会全部丢失；现改为本地+云端双存，登录后自动恢复，永远不会再丢",
   "apkUrl": "https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk",
   "releasedAt": "2026-10-21"
 }

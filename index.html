@@ -2474,6 +2474,8 @@ async function afterLogin(phone){
   SESSION_IS_ADMIN = null;
   await syncAdminFlag();
   await refresh();
+  // 登录后恢复「已查看」记录（不阻塞，失败静默）
+  syncSeenFromCloud();
 }
 /* 归属人的展示名：优先 owner_name，退化到手机号
    注意：详情页需要「昵称 + 号码」两段，所以这里只返回名字，
@@ -2569,17 +2571,70 @@ const SEEN_KEY = 'radar_seen_leads';
 const SEEN_FOLD_KEY = 'radar_seen_folded';   // '1' = 折叠收起，'0' = 展开
 
 function seenSet(){
-  try{ return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }catch(_){ return new Set(); }
+  try{
+    const v = JSON.parse(localStorage.getItem(SEEN_KEY) || '[]');
+    // 加固：必须是字符串数组，脏值（null/对象/数字）一律丢弃重建，避免整条记录损坏后折叠区永远消失
+    if(!Array.isArray(v)) return new Set();
+    return new Set(v.filter(x=>typeof x==='string'));
+  }catch(_){ return new Set(); }
 }
+
+/* 「已查看」状态云端持久化：
+   以前只存本机 localStorage，清浏览器数据 / 重装 APK / 换设备后记录全丢，
+   所有线索变回"未查看"，折叠区整个消失（用户 2026-10-21 反馈）。
+   现在双写：本地照旧（保证渲染速度），同时静默写云端 lead_seen 表；
+   登录后从云端拉一次合并回来，丢了的记录自动恢复。 */
+let CLOUD_SEEN_READY = false;   // 防止 boot 期间重复拉
+let CLOUD_SEEN_PENDING = [];    // 云端没就绪时的待写入队列
+
+async function syncSeenFromCloud(){
+  if(CLOUD_SEEN_READY) return;
+  CLOUD_SEEN_READY = true;
+  try{
+    const { data, error } = await cloud.database.from('lead_seen').select('lead_id');
+    if(error) throw error;
+    const cloudIds = (data||[]).map(r=>String(r.lead_id));
+    if(cloudIds.length){
+      const set = seenSet();
+      let added = 0;
+      cloudIds.forEach(k=>{ if(!set.has(k)){ set.add(k); added++; } });
+      if(added){
+        // 只保留最近 800 条，与 markSeen 的上限一致
+        localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(set).slice(-800)));
+        render();
+      }
+    }
+    // 把云端拉取前本地新产生、还没来得及上云的补写上去
+    if(CLOUD_SEEN_PENDING.length){
+      const pend = CLOUD_SEEN_PENDING.slice();
+      CLOUD_SEEN_PENDING = [];
+      pend.forEach(k=>pushSeenToCloud(k));
+    }
+  }catch(e){
+    // 拉取失败不阻塞主流程，下次启动再试
+    CLOUD_SEEN_READY = false;
+    console.warn('已查看记录云端同步失败：', e?.message||e);
+  }
+}
+
+function pushSeenToCloud(leadId){
+  // 静默写云端；会话没就绪时先挂起，syncSeenFromCloud 完成后补写
+  if(!CLOUD_SEEN_READY){ CLOUD_SEEN_PENDING.push(String(leadId)); return; }
+  cloud.database.from('lead_seen')
+    .insert({ lead_id: String(leadId) }, { ignoreDuplicates: true })
+    .then(({ error })=>{ if(error) console.warn('已查看记录上云失败：', error.message||error); })
+    .catch(()=>{});
+}
+
 function markSeen(id){
   try{
     const set = seenSet();
     const k = String(id);
-    if(set.has(k)) return;
-    set.add(k);
+    const isNew = !set.has(k);
+    if(isNew) set.add(k);
     // 只保留最近 800 条，避免无限增长
-    const arr = Array.from(set).slice(-800);
-    localStorage.setItem(SEEN_KEY, JSON.stringify(arr));
+    localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(set).slice(-800)));
+    if(isNew) pushSeenToCloud(k);
   }catch(_){}
 }
 function isSeen(id){ return seenSet().has(String(id)); }
@@ -3970,6 +4025,8 @@ async function bootSession(){
   SESSION_IS_ADMIN = null;
   await syncAdminFlag();
   await refresh();
+  // 登录完成后从云端恢复「已查看」记录（不阻塞界面，失败静默）
+  syncSeenFromCloud();
 }
 
 /* ---------- 版本检测：让装了 APK 的人知道线上有新版本 ----------
@@ -3983,7 +4040,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.7';
+const APP_VERSION = '1.4.8';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
