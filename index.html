@@ -3177,6 +3177,28 @@ function cleanLeadName(v){
   return name;
 }
 
+// 地址缺省/市级时，从公司名或原文里补一个「××市」，否则四级下拉认不出来
+// 注意别用「含区字」判断——「商贸城三区」「东区」这类不是行政区
+function guessCityPrefix(addr, ctx){
+  const a = String(addr||'').trim();
+  if(!a) return a;
+  if(/省|自治区/.test(a) || /[\u4e00-\u9fa5]{2,4}市/.test(a)) return a;
+  const src = String(ctx||'');
+  let city = '';
+  const m = src.match(/([\u4e00-\u9fa5]{2,4}市)/);
+  if(m) city = m[1];
+  else {
+    // 原文只写了「义乌」「东阳」没带"市"字（商贸城档口常见）
+    try{
+      const { countyToCity } = geoLookup();
+      city = [...countyToCity.keys()]
+        .filter(n=>n.length>=2 && src.includes(bareName(n)))
+        .sort((x,y)=>y.length-x.length)[0] || '';
+    }catch(_){}
+  }
+  return city ? city + a : a;
+}
+
 function parseLeadText(raw){
   const t = String(raw||'').replace(/\u00a0/g,' ').replace(/[ \t]+/g,' ').trim();
   const out = {};
@@ -3253,7 +3275,7 @@ function parseLeadText(raw){
     const m = t.match(/(?:[\u4e00-\u9fa5]{2,8}(?:省|自治区))?[\u4e00-\u9fa5]{2,10}(?:市|区|县)[\u4e00-\u9fa5A-Za-z0-9#\-（）()]{1,40}(?:号|室|楼|栋|幢|单元|园区|电商园|大厦|广场|市场|商城|村)/);
     if(m) addr = m[0].trim();
   }
-  if(addr) out.area = addr.replace(/^[\s:：]+|[\s。;；]+$/g,'');
+  if(addr) out.area = guessCityPrefix(addr.replace(/^[\s:：]+|[\s。;；]+$/g,''), (out.company||'') + ' ' + t);
 
   // 6) 平台
   const PF = ['Shein','SHEIN','Temu','TEMU','1688','阿里国际站','阿里巴巴','亚马逊','TikTok','Tiktok','抖音','拼多多','义乌购','速卖通','独立站','Shopee','虾皮','希音'];
@@ -3301,26 +3323,8 @@ function applyParsedLead(p){
   // 地址走原有「整段粘贴自动拆四级」的逻辑，写完值补发 input 事件
   const area=$('#f_area');
   if(area && p.area){
-    let addr = p.area;
-    // 地址里没带省/市时，四级下拉认不出来；这时从公司名或原文里找一个「××市」补在前面
-    // 注意别用「含区字」判断——「商贸城三区」「东区」这类不是行政区
-    const hasCity = /省|自治区/.test(addr) || /[\u4e00-\u9fa5]{2,4}市/.test(addr);
-    if(!hasCity){
-      const src2 = (p.company||'') + ' ' + (p.source||'');
-      let cityName = '';
-      const m = src2.match(/([\u4e00-\u9fa5]{2,4}市)/);
-      if(m) cityName = m[1];
-      else {
-        // 原文只写了「义乌」「东阳」没带"市"字（商贸城档口常见）
-        try{
-          const { countyToCity } = geoLookup();
-          cityName = [...countyToCity.keys()]
-            .filter(n=>n.length>=2 && src2.includes(bareName(n)))
-            .sort((a,b)=>b.length-a.length)[0] || '';
-        }catch(_){}
-      }
-      if(cityName) addr = cityName + addr;
-    }
+    // 地址缺省/市时补一个「××市」，否则四级下拉认不出来
+    const addr = guessCityPrefix(p.area, (p.company||'') + ' ' + (p.source||''));
     area.value = addr;
     // 四级联动监听的是 change（捕获阶段），两个事件都补发一次最稳
     area.dispatchEvent(new Event('input', {bubbles:true}));
@@ -4423,7 +4427,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.14';
+const APP_VERSION = '1.4.15';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
