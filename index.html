@@ -4242,7 +4242,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.11';
+const APP_VERSION = '1.4.12';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
@@ -4251,7 +4251,31 @@ const SHARECODE = (function(){
 })();
 const PUBLISHED_ORIGIN = 'https://glasses-radar.app.workbuddy.host';
 const FALLBACK_SHARECODE = 'ABA2SVUO5X';   // 发布链接里的固定分享码
-const APK_URL = 'https://glasses-radar.app.workbuddy.host/jingke-radar.apk?sharecode=ABA2SVUO5X';
+const APK_URL = PUBLISHED_ORIGIN + '/jingke-radar.apk?sharecode=' + FALLBACK_SHARECODE;
+// GitHub Release 只作最后兜底：国内网络经常连不上或下到一半断掉，
+// 之前把它当主下载地址，用户点「立即更新」就一直转圈/下到残包。
+const APK_URL_GITHUB = 'https://github.com/kadilo-optical/jingke-radar/releases/latest/download/jingke-radar.apk';
+
+/* 带版本号的镜像地址：文件名里含版本号，不会命中浏览器/手机下载器/中间代理的旧缓存。
+   同一个固定名 jingke-radar.apk 反复覆盖时，这些缓存会让人下到上一版，
+   表现就是「文件大小和版本都不对」。 */
+function mirrorApkUrl(version){
+  const v = String(version || '').trim();
+  if(!/^\d+(\.\d+)*$/.test(v)) return APK_URL;
+  return PUBLISHED_ORIGIN + '/jingke-radar-' + v + '.apk?sharecode=' + FALLBACK_SHARECODE;
+}
+
+/* 下载地址候选队列：先镜像（版本化 → 固定名），再云端配置的非镜像地址，最后 GitHub。
+   这样即使某个环节挂了，用户还有明确可点的第二、第三条路。 */
+function apkCandidates(remote){
+  const list = [];
+  if(remote && remote.version) list.push(mirrorApkUrl(remote.version));
+  list.push(APK_URL);
+  const cfg = remote && remote.apkUrl;
+  if(cfg && !/glasses-radar\.app\.workbuddy\.host/.test(cfg)) list.push(cfg);
+  list.push(APK_URL_GITHUB);
+  return list.filter((u, i, a) => u && a.indexOf(u) === i);
+}
 
 /* 原生 HTTP：App 内用 CapacitorHttp（不受同源策略限制），网页版用普通 fetch */
 function nativeHttpGet(url, timeoutMs){
@@ -4405,12 +4429,42 @@ function showUpdateBar(remote, force){
   document.body.appendChild(el);
   el.querySelector('#updateLater').onclick = ()=> el.remove();
   el.querySelector('#updateGo').onclick = ()=>{
-    // Releases 里用的是固定文件名，所以这个地址永远指向最新版 APK
-    const url = remote.apkUrl || APK_URL;
-    // 网页版没法直接装 APK，给个可点的说明；App 内直接跳浏览器下载
-    if(window.APP_ENV === 'native'){ location.href = url; }
-    else { window.open(url, '_blank'); }
+    openApkDownload(apkCandidates(remote), el);
   };
+}
+
+/* 打开安装包下载。
+   以前这里直接跳 remote.apkUrl（GitHub），国内用户点了就是一直转圈、或者下到半截的包，
+   还容易被浏览器缓存成旧版本。现在：
+   1) 首选带版本号的国内镜像（不会命中旧缓存，也能一眼看出下的是哪一版）；
+   2) 几秒后如果界面还在（没跳到浏览器，说明被拦了或网络不通），
+      就把备用地址摆到明面上，不用用户自己找。 */
+function openApkDownload(urls, bar){
+  const list = (urls && urls.length) ? urls : [APK_URL];
+  const first = list[0];
+  const go = (u) => {
+    if(window.APP_ENV === 'native'){ location.href = u; }
+    else { window.open(u, '_blank'); }
+  };
+  toast('正在打开下载…如没反应，稍后可点界面上的备用地址', 2600);
+  go(first);
+  if(!bar) return;
+  setTimeout(()=>{
+    if(!document.body.contains(bar)) return;         // 用户已经关掉升级条
+    if(document.visibilityState === 'hidden') return; // 已经切到浏览器/下载器，正常情况
+    const alt = list.filter(u => u !== first);
+    if(!alt.length) return;
+    bar.innerHTML = '<div style="flex:1">'
+      + '<div style="font-weight:600;margin-bottom:2px">没开始下载？</div>'
+      + '<div style="color:#C9C2BB;font-size:12.5px">换个地址再试，安装包是同一个</div>'
+      + '</div>'
+      + '<button id="dlAlt1" style="background:#C4562A;color:#fff;border:none;padding:9px 14px;border-radius:9px;font-size:13px;font-weight:600;white-space:nowrap">镜像下载</button>'
+      + '<button id="dlAlt2" style="background:transparent;color:#9A9188;border:none;padding:8px 4px;font-size:13px">备用</button>';
+    const a1 = bar.querySelector('#dlAlt1');
+    const a2 = bar.querySelector('#dlAlt2');
+    if(a1) a1.onclick = ()=> go(alt[0]);
+    if(a2) a2.onclick = ()=> go(alt[alt.length - 1]);
+  }, 4500);
 }
 
 /* 省 / 市 / 区县 / 区域 四级联动：select 用 change 事件（click 在移动端不可靠）
