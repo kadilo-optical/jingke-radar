@@ -2802,14 +2802,14 @@ function todoView(){
 
   // 「我的客户」区块始终显示，让人知道这块在哪
   const custBlock = `
-    <div style="padding:14px 16px 6px;display:flex;align-items:center;gap:8px">
+    <div id="custBlock" style="padding:14px 16px 6px;display:flex;align-items:center;gap:8px">
       <span style="font-size:13.5px;color:var(--ink);font-weight:600">${isSuperAdmin()?'全部客户（超管视角）':'我的客户'}</span>
-      <span style="font-size:12px;color:var(--ink3);background:var(--brand-lt);color:var(--brand-dk);padding:1px 8px;border-radius:20px">${myCustomers.length}</span>
+      <span style="font-size:12px;color:var(--brand-lt);color:var(--brand-dk);padding:1px 8px;border-radius:20px">${myCustomers.length}</span>
     </div>
     ${myCustomers.length
       ? `<div class="list" style="padding-top:0">${myCustomers.map(cardView).join('')}</div>`
       : `<div style="margin:0 16px 8px;padding:14px 16px;background:var(--brand-lt);border-radius:12px;font-size:12.5px;color:var(--brand-dk);line-height:1.6">
-           还没有我的客户。打开任意线索详情，点「转入我的客户」，就会出现在这里。
+           还没有我的客户。点右上角「＋ 添加客户」直接建客户，或在任意线索详情里点「转入我的客户」。
          </div>`}
   `;
 
@@ -3056,7 +3056,8 @@ function leadForm(l={}, prefillArea=''){
         <button class="btn ghost" id="btnAi">AI 重新打分</button>
         <button class="btn ghost" id="btnDel" style="color:var(--bad)">删除</button>
       </div>`
-      :`<button class="btn" id="btnSave">保存客户</button>`}
+      :`<button class="btn" id="btnSave">保存到我的客户</button>
+        <div style="font-size:11.5px;color:var(--ink3);text-align:center;margin-top:8px;line-height:1.5">保存后直接进入「我的客户」，不再经过线索库</div>`}
     </div>
     <div style="height:20px"></div>
   </div>`;
@@ -3200,6 +3201,14 @@ function collectForm(){
     if(S.editing.script != null) data.script = S.editing.script;
     if(S.editing.score != null) data.score = S.editing.score;
     if(S.editing.score_notes != null) data.score_notes = S.editing.score_notes;
+  }else{
+    // 手动添加的客户直接归入「我的客户」：不再先落线索库、再手动点「转入我的客户」。
+    // 与详情页转客户写入的字段保持一致（customer_at / customer_owner_*），
+    // 这样「我的客户」区块、归属人显示、超管视角都能正常识别。
+    data.is_customer = true;
+    data.customer_at = new Date().toISOString();
+    data.customer_owner_id = currentUid() || 'anonymous';
+    data.customer_owner_name = ownerLabel({owner_name:displayName(), owner_phone:currentPhone()});
   }
   return data;
 }
@@ -3637,14 +3646,16 @@ document.addEventListener('click', async (e)=>{
       await refresh();
       closeSheet();
       if(isNew){
-        // 新加的客户不能自动打开详情：一打开就被标记「已查看」，
-        // 会落进默认折叠的「已查看」分组里，看起来像没加上。
-        // 这里改成回到线索库「全部」并滚到顶部，让人立刻看到这条新记录。
-        S.tab='leads'; S.filter='all'; S.q='';
+        // 新增的客户已经是「我的客户」（is_customer=true 在 collectForm 里写入），
+        // 所以保存后直接去待跟进页并停在「我的客户」区块，而不是回线索库。
+        // 也不能自动打开详情：一打开就被标记「已查看」，会让人误以为没保存成功。
+        S.tab='todo'; S.filter='all'; S.q='';
         if(saved && saved.id!=null) unmarkSeen(saved.id);
         render();
-        window.scrollTo({top:0,behavior:'smooth'});
-        toast('已添加「'+((saved&&saved.company)||data.company)+'」✓ 在列表最上面', 2800);
+        const blk=document.getElementById('custBlock');
+        if(blk) blk.scrollIntoView({behavior:'smooth',block:'start'});
+        else window.scrollTo({top:0,behavior:'smooth'});
+        toast('已加入我的客户：「'+((saved&&saved.company)||data.company)+'」✓', 2800);
       }else{
         const fresh=S.leads.find(x=>String(x.id)===String(saved?.id)) || saved;
         toast('已保存');
@@ -3653,7 +3664,7 @@ document.addEventListener('click', async (e)=>{
     }catch(err){
       console.error(err);
       toast('保存失败：'+(err.message||''));
-      btn.disabled=false; btn.textContent=S.editing?'保存修改':'保存客户';
+      btn.disabled=false; btn.textContent=S.editing?'保存修改':'保存到我的客户';
     }
     return;
   }
@@ -4231,7 +4242,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.10';
+const APP_VERSION = '1.4.11';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
