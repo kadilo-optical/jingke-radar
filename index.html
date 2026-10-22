@@ -303,6 +303,7 @@ button{cursor:pointer;border:none;background:none;padding:0}
       <h1>镜客雷达</h1>
       <div class="sub" id="topSub">眼镜贸易商精准拓客</div>
     </div>
+    <button class="verbtn" id="btnAddTop" style="display:none;font-weight:600" title="添加客户">＋ 添加客户</button>
     <button class="verbtn" id="btnVer" title="当前版本 / 检查更新">v<span id="verNum">1.4.5</span></button>
     <button class="iconbtn" id="btnUser" title="账号">👤</button>
   </div>
@@ -316,8 +317,6 @@ button{cursor:pointer;border:none;background:none;padding:0}
   <button data-tab="stats"><span class="ic">▦</span>看板</button>
   <button data-tab="me"><span class="ic">☰</span>我的</button>
 </nav>
-
-<button class="fab" id="fab">+</button>
 
 <div class="mask" id="mask"></div>
 <div class="sheet" id="sheet"></div>
@@ -2358,8 +2357,9 @@ function render(){
     else if(S.tab==='stats') app.innerHTML = statsView();
     else app.innerHTML = meView();
 
-    const fab=$('#fab');
-    if(fab) fab.style.display = (S.tab==='leads'||S.tab==='todo') ? 'grid' : 'none';
+    // 添加客户入口只在「待跟进」页的右上角出现
+    const addTop=$('#btnAddTop');
+    if(addTop) addTop.style.display = S.tab==='todo' ? 'block' : 'none';
     document.querySelectorAll('.nav button').forEach(b=>{
       b.classList.toggle('on', b.dataset.tab===S.tab);
     });
@@ -2595,6 +2595,23 @@ function markSeen(id){
 }
 function isSeen(id){ return seenSet().has(String(id)); }
 
+/* 取消「已查看」标记：刚添加的客户不能被当成看过的，否则会藏进折叠区 */
+function unmarkSeen(id){
+  try{
+    const set = seenSet();
+    const k = String(id);
+    if(!set.has(k)) return;
+    set.delete(k);
+    localStorage.setItem(SEEN_KEY, JSON.stringify(Array.from(set).slice(-800)));
+    // 云端也删掉，否则下次登录同步会把这个「已查看」又拉回来
+    try{
+      if(CLOUD_SEEN_READY && cloud && cloud.database){
+        cloud.database.from('lead_seen').delete().eq('lead_id', k).then(()=>{},()=>{});
+      }
+    }catch(_){}
+  }catch(_){}
+}
+
 function filteredLeads(){
   // 已转入「我的客户」的不再出现在线索库（只留在待跟进-我的客户里）
   let arr = S.leads.filter(l=>l.is_customer !== true);
@@ -2641,7 +2658,11 @@ function leadsView(){
   </button>
   <div class="tabs">
     ${chips.map(([k,l])=>`<button class="chip ${S.filter===k?'on':''}" data-f="${k}">${l}</button>`).join('')}
-    <button class="chip ${S.selMode?'on':''}" id="btnSelMode" style="margin-left:auto;flex:0 0 auto">${S.selMode?'退出管理':'批量管理'}</button>
+  </div>
+  <div style="display:flex;justify-content:flex-end;padding:0 16px 8px">
+    <button class="chip ${S.selMode?'on':''}" id="btnSelMode" style="flex:0 0 auto">
+      ${S.selMode?'✕ 退出管理':'☑ 批量管理'}
+    </button>
   </div>
   ${S.selMode?batchBarHtml(arr):''}
   ${leadsListHtml(arr)}`;
@@ -2988,6 +3009,12 @@ function leadForm(l={}, prefillArea=''){
     <button class="close" data-close>✕</button>
   </div>
   <div class="sheet-body">
+    ${l.id?'':`<div class="f" style="background:var(--brand-lt);border:1px dashed #E2C4B4;border-radius:12px;padding:10px 12px">
+      <label style="display:flex;align-items:center;gap:6px">粘贴一段客户信息，自动识别填入</label>
+      <textarea id="f_paste" placeholder="把企查查/1688/微信里的一整段信息粘进来即可，例：&#10;义乌市露霸眼镜有限公司 联系人杨银华 18358048731&#10;地址：后宅街道上洪电商园5楼503 主营太阳镜 平台Temu 年销1200万"></textarea>
+      <div class="hint">自动抓：公司全称、联系人、手机/固话、地址、主营平台、体量线索；识别后可再手动改</div>
+      <button class="btn ghost" id="btnParse" style="margin-top:8px;font-size:13px;padding:9px">识别并填入</button>
+    </div>`}
     <div class="f"><label>公司全称<span class="req">*</span></label>
       <input id="f_company" value="${esc(l.company||'')}" placeholder="例：义乌市××眼镜有限公司"></div>
     <div class="f"><label>店铺 / 品牌昵称</label>
@@ -3029,10 +3056,109 @@ function leadForm(l={}, prefillArea=''){
         <button class="btn ghost" id="btnAi">AI 重新打分</button>
         <button class="btn ghost" id="btnDel" style="color:var(--bad)">删除</button>
       </div>`
-      :`<button class="btn" id="btnSave">保存并转客户</button>`}
+      :`<button class="btn" id="btnSave">保存客户</button>`}
     </div>
     <div style="height:20px"></div>
   </div>`;
+}
+
+/* 从一段粘贴文本里抽字段：公司名/联系人/电话/地址/平台/体量线索
+   纯前端规则匹配，识别不出的字段留空，交给人工补 —— 不猜、不编。 */
+function parseLeadText(raw){
+  const t = String(raw||'').replace(/\u00a0/g,' ').replace(/[ \t]+/g,' ').trim();
+  const out = {};
+  if(!t) return out;
+
+  // 1) 电话：手机优先，其次固话（0xxx-xxxxxxx）
+  const mobiles = [...new Set(t.match(/1[3-9]\d{9}/g) || [])];
+  const lands   = [...new Set((t.match(/0\d{2,3}[-\s]?\d{7,8}/g) || []).map(s=>s.replace(/\s/g,'')))];
+  if(mobiles[0]) out.phone = mobiles[0];
+  const second = mobiles[1] || lands[0];
+  if(second) out.phone_alt = second;
+
+  // 2) 公司全称：优先带「有限公司/有限责任公司」，其次商行/经营部/店/厂
+  const compKo = t.match(/[\u4e00-\u9fa5A-Za-z（）()·]{2,32}?(?:股份有限公司|有限责任公司|有限公司)/);
+  const compOther = t.match(/[\u4e00-\u9fa5（）()·]{2,24}(?:商行|经营部|商店|专营店|旗舰店|工厂|厂)(?![商品])/);
+  if(compKo) out.company = compKo[0].trim();
+  else if(compOther) out.company = compOther[0].trim();
+
+  // 3) 联系人：抓标签后面的 2~4 个汉字
+  const bossM = t.match(/(?:联系人|法定代表人|法人代表|法人|负责人|老板|总经理|经理|店主)\s*[:：]?\s*([\u4e00-\u9fa5]{2,4})/);
+  if(bossM && !/^(电话|手机|先生|女士|公司)$/.test(bossM[1])) out.boss_name = bossM[1];
+
+  // 4) 店铺/品牌昵称：显式标签，或英文品牌名
+  const shopM = t.match(/(?:店铺|店名|品牌|昵称|店铺名称)\s*[:：]?\s*([^\s，,。;；]{2,24})/);
+  if(shopM) out.shop_name = shopM[1].trim();
+
+  // 5) 地址：标签优先，否则抓含行政区划/道路门牌的片段
+  const addrM = t.match(/(?:注册地址|经营地址|公司地址|所在地|地址)\s*[:：]?\s*([^\n;；]{6,80})/);
+  let addr = addrM ? addrM[1].trim() : '';
+  if(!addr){
+    const guess = t.match(/(?:浙江省?|义乌市?)[^\n;；]{0,12}(?:街道|镇|路|街|小区|电商园|园区|大厦|栋|幢|室|号)[^\n;；]{0,40}/);
+    if(guess) addr = guess[0].trim();
+  }
+  if(addr) out.area = addr.replace(/^[\s:：]+|[\s。;；]+$/g,'');
+
+  // 6) 平台
+  const PF = ['Shein','SHEIN','Temu','TEMU','1688','阿里国际站','阿里巴巴','亚马逊','TikTok','Tiktok','抖音','拼多多','义乌购','速卖通','独立站','Shopee','虾皮','希音'];
+  const pfs = [...new Set(PF.filter(k=>t.includes(k)).map(k=>{
+    const map = {'SHEIN':'Shein','TEMU':'Temu','Tiktok':'TikTok','虾皮':'Shopee','希音':'Shein'};
+    return map[k] || k;
+  }))];
+  if(pfs.length) out.platforms = pfs.join(' / ');
+
+  // 7) 体量证据：年销/营业额/评价/SKU/粉丝/员工
+  const rev = [];
+  const revM = t.match(/(?:年销(?:售额)?|营业额|年产值|年出口额)\s*[:：]?\s*([\d.]+)\s*(万|亿)?/);
+  if(revM) rev.push(`年销${revM[1]}${revM[2]||'万'}`);
+  const evalM = t.match(/(?:累计)?评价\s*[:：]?\s*([\d.]+)\s*(万)?/);
+  if(evalM) rev.push(`累计评价${evalM[1]}${evalM[2]||''}`);
+  const skuM = t.match(/SKU\s*[:：]?\s*([\d,]+)/i);
+  if(skuM) rev.push(`SKU ${skuM[1]}`);
+  const fsM = t.match(/粉丝\s*[:：]?\s*([\d.]+)\s*(万)?/);
+  if(fsM) rev.push(`粉丝${fsM[1]}${fsM[2]||''}`);
+  const empM = t.match(/(?:员工|团队|参保)\s*(?:人数)?\s*[:：]?\s*(\d+)\s*人/);
+  if(empM) rev.push(`${empM[1]}人`);
+  if(rev.length) out.revenue_evidence = rev.join('；');
+
+  // 8) 需求信号：招聘/扩编这类带时间动作的描述
+  const demM = t.match(/([^\n。;；]{0,20}(?:招|扩编|新开|上新|扩产|招商)[^\n。;；]{0,30})/);
+  if(demM) out.demand_signal = demM[1].trim();
+
+  // 9) 来源原样留档（便于回溯核实）
+  out.source = '粘贴识别：' + t.slice(0, 160);
+  return out;
+}
+
+function applyParsedLead(p){
+  const set=(id,val)=>{ const el=$('#'+id); if(el && val) el.value = val; };
+  set('f_company', p.company);
+  set('f_shop', p.shop_name);
+  set('f_boss', p.boss_name);
+  set('f_phone', p.phone);
+  set('f_phone2', p.phone_alt);
+  set('f_platforms', p.platforms);
+  set('f_rev', p.revenue_evidence);
+  set('f_demand', p.demand_signal);
+  const src=$('#f_source');
+  if(src && p.source && !src.value.trim()) src.value = p.source;
+  // 地址走原有「整段粘贴自动拆四级」的逻辑，写完值补发 input 事件
+  const area=$('#f_area');
+  if(area && p.area){
+    let addr = p.area;
+    // 地址里没带市/县时，四级下拉认不出来；这时从公司名或原文里找一个「××市」补在前面
+    if(!/[市县区旗]/.test(addr)){
+      const src = (p.company||'') + ' ' + (p.source||'');
+      const m = src.match(/([\u4e00-\u9fa5]{2,4}市)/);
+      if(m) addr = m[1] + addr;
+    }
+    area.value = addr;
+    // 四级联动监听的是 change（捕获阶段），两个事件都补发一次最稳
+    area.dispatchEvent(new Event('input', {bubbles:true}));
+    area.dispatchEvent(new Event('change', {bubbles:true}));
+  }
+  const got = [p.company&&'公司',p.boss_name&&'联系人',(p.phone||p.phone_alt)&&'电话',p.area&&'地址',p.platforms&&'平台',p.revenue_evidence&&'体量'].filter(Boolean);
+  toast(got.length ? '已识别：'+got.join('、') : '没识别出字段，请手动填写', 2600);
 }
 
 function collectForm(){
@@ -3425,8 +3551,8 @@ document.addEventListener('click', async (e)=>{
     return;
   }
 
-  // fab
-  if(t.closest('#fab')){ S.editing=null; openSheet(leadForm({})); return; }
+  // 待跟进页右上角「添加客户」
+  if(t.closest('#btnAddTop')){ S.editing=null; openSheet(leadForm({})); return; }
 
   // close
   if(t.closest('[data-close]')||t.id==='mask'){ closeSheet(); return; }
@@ -3483,6 +3609,15 @@ document.addEventListener('click', async (e)=>{
     return;
   }
 
+  // 粘贴识别填入
+  if(t.closest('#btnParse')){
+    const ta=$('#f_paste');
+    const txt=ta ? ta.value : '';
+    if(!txt.trim()){ toast('先把客户信息粘贴到上面的框里'); return; }
+    applyParsedLead(parseLeadText(txt));
+    return;
+  }
+
   // save
   if(t.closest('#btnSave')){
     const data=collectForm();
@@ -3495,18 +3630,30 @@ document.addEventListener('click', async (e)=>{
     const btn=t.closest('#btnSave');
     btn.disabled=true; btn.textContent='保存中…';
     try{
+      const isNew = !S.editing;
       const saved=await saveLead(data, S.editing?.id);
       window.__pendingScore=null;
-      toast(S.editing?'已保存':'已转客户 ✓');
-      await refresh();
-      const fresh=S.leads.find(x=>String(x.id)===String(saved?.id)) || saved;
       S.editing=null;
+      await refresh();
       closeSheet();
-      setTimeout(()=>{ if(fresh) openDetail(fresh); },280);
+      if(isNew){
+        // 新加的客户不能自动打开详情：一打开就被标记「已查看」，
+        // 会落进默认折叠的「已查看」分组里，看起来像没加上。
+        // 这里改成回到线索库「全部」并滚到顶部，让人立刻看到这条新记录。
+        S.tab='leads'; S.filter='all'; S.q='';
+        if(saved && saved.id!=null) unmarkSeen(saved.id);
+        render();
+        window.scrollTo({top:0,behavior:'smooth'});
+        toast('已添加「'+((saved&&saved.company)||data.company)+'」✓ 在列表最上面', 2800);
+      }else{
+        const fresh=S.leads.find(x=>String(x.id)===String(saved?.id)) || saved;
+        toast('已保存');
+        setTimeout(()=>{ if(fresh) openDetail(fresh); },260);
+      }
     }catch(err){
       console.error(err);
       toast('保存失败：'+(err.message||''));
-      btn.disabled=false; btn.textContent=S.editing?'保存修改':'保存并转客户';
+      btn.disabled=false; btn.textContent=S.editing?'保存修改':'保存客户';
     }
     return;
   }
@@ -4084,7 +4231,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.9';
+const APP_VERSION = '1.4.10';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
