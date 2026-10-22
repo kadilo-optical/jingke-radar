@@ -2429,6 +2429,8 @@ async function afterLogin(phone){
   if(p) saveAutoLogin(p);   // 记下 7 天免密凭证窗口
   SESSION_IS_ADMIN = null;
   await syncAdminFlag();
+  // 先对齐用户名再刷新：首屏显示的就是云端/本机里最新的那个名字
+  await syncNameFromCloud();
   await refresh();
   // 登录后恢复「已查看」记录（不阻塞，失败静默）
   syncSeenFromCloud();
@@ -2874,11 +2876,83 @@ function statsView(){
 
 function displayName(){
   // 用户自定义名称优先（存在本机），其次用云端账号名
-  try{
-    const local = localStorage.getItem('radar_display_name');
-    if(local && local.trim()) return local.trim();
-  }catch(_){}
+  const local = localName();
+  if(local) return local;
   return S.session?.user?.name || '未命名用户';
+}
+
+/* ------------------------------------------------------------
+   用户名：本机 + 云端双存
+   以前只写 localStorage。问题是网页版（glasses-radar.app.workbuddy.host）
+   和 APP（capacitor 的 https://localhost）是两个独立的存储域，改了一边另一边
+   当然看不到；再加上线索卡上的「来源」是录入那一刻的快照，改名后仍然显示旧名，
+   于是就变成「改了好几次都没保存」的观感。
+   现在：保存 → 写本机 + 写云端 app_profile + 把本人名下线索的归属名一起刷新；
+   登录 → 按时间戳比对，谁新用谁，换设备也是同一个名字。
+   ------------------------------------------------------------ */
+const NAME_KEY = 'radar_display_name';
+const NAME_AT_KEY = 'radar_display_name_at';
+
+function localName(){
+  try{
+    const v = localStorage.getItem(NAME_KEY);
+    return v && v.trim() ? v.trim() : '';
+  }catch(_){ return ''; }
+}
+function localNameAt(){
+  try{ return localStorage.getItem(NAME_AT_KEY) || ''; }catch(_){ return ''; }
+}
+function saveLocalName(name){
+  try{
+    localStorage.setItem(NAME_KEY, name);
+    localStorage.setItem(NAME_AT_KEY, new Date().toISOString());
+  }catch(_){}
+}
+
+async function pushNameToCloud(name){
+  const uid = currentUid();
+  if(!uid) return false;
+  try{
+    const { error } = await cloud.database.from('app_profile')
+      .upsert({ owner_id: uid, display_name: name, updated_at: new Date().toISOString() }, { onConflict: 'owner_id' });
+    if(error){ console.warn('用户名上云失败：', error.message || error); return false; }
+    return true;
+  }catch(e){ console.warn('用户名上云异常：', e && e.message); return false; }
+}
+
+/* 改名后把「我名下」线索的归属名一并改掉，否则卡片上的来源永远停在旧名字 */
+async function renameOwnedRecords(name){
+  const uid = currentUid();
+  if(!uid) return;
+  try{ await cloud.database.from('leads').update({ owner_name: name }).eq('owner_id', uid); }catch(_){}
+  try{ await cloud.database.from('leads').update({ customer_owner_name: name }).eq('customer_owner_id', uid); }catch(_){}
+}
+
+let NAME_SYNCED = false;
+async function syncNameFromCloud(){
+  const uid = currentUid();
+  if(!uid || NAME_SYNCED) return;
+  NAME_SYNCED = true;
+  try{
+    const { data, error } = await cloud.database.from('app_profile')
+      .select('display_name,updated_at').eq('owner_id', uid);
+    if(error) return;
+    const row = data && data[0];
+    const remote = row && String(row.display_name || '').trim();
+    if(!remote){
+      // 云端还没有名字：把本机的推上去（老用户第一次升级后就是这条路径）
+      const ln = localName();
+      if(ln) await pushNameToCloud(ln);
+      return;
+    }
+    const ln = localName();
+    const remoteAt = Date.parse((row && row.updated_at) || '') || 0;
+    const localAt = Date.parse(localNameAt() || '') || 0;
+    if(!ln) saveLocalName(remote);                       // 本机没有 → 用云端
+    else if(remoteAt > localAt) saveLocalName(remote);   // 云端更新 → 覆盖本机
+    else if(ln !== remote) await pushNameToCloud(ln);    // 本机更新 → 推上去
+    if(S.session && S.session.user) S.session.user.name = displayName();
+  }catch(_){}
 }
 
 function meView(){
@@ -2892,7 +2966,7 @@ function meView(){
     <div class="script-box" style="text-align:center;padding:24px 16px">
       <div style="width:62px;height:62px;border-radius:50%;background:var(--brand-lt);color:var(--brand-dk);
         display:grid;place-items:center;font-size:26px;margin:0 auto 12px">◎</div>
-      <div style="font-size:17px;font-weight:600">${esc(name)}${admin?' <span style="font-size:11px;color:#fff;background:var(--brand);border-radius:6px;padding:2px 7px;vertical-align:2px">超管</span>':''}</div>
+      <div id="meName" style="font-size:17px;font-weight:600">${esc(name)}${admin?' <span style="font-size:11px;color:#fff;background:var(--brand);border-radius:6px;padding:2px 7px;vertical-align:2px">超管</span>':''}</div>
       <div style="font-size:12.5px;color:var(--ink3);margin-top:4px">${esc(phone||'镜客雷达 · 眼镜贸易商拓客')}</div>
       <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
         <button class="btn ghost" id="btnEditName" style="width:auto;padding:8px 16px;font-size:13px;margin:0">修改用户名</button>
@@ -2937,7 +3011,7 @@ function nameForm(){
     <label class="fld"><span>显示名称</span>
       <input id="f_name" value="${esc(cur)}" placeholder="例如：龚诚" maxlength="20" autocomplete="off">
     </label>
-    <p style="font-size:12px;color:var(--ink3);margin:4px 0 14px">这个名字只影响本机显示，不影响云端登录账号。</p>
+    <p style="font-size:12px;color:var(--ink3);margin:4px 0 14px">保存后会同步到云端，换设备也是这个名字；你名下线索的「录入人 / 归属人」会一并更新。</p>
     <button class="btn" id="btnSaveName">保存</button>
   </div>`;
 }
@@ -3988,12 +4062,20 @@ document.addEventListener('click', async (e)=>{
   if(t.closest('#btnSaveName')){
     const v=($('#f_name')?.value||'').trim();
     if(!v){ toast('名称不能为空'); return; }
-    try{
-      localStorage.setItem('radar_display_name', v);
-      if(S.session && S.session.user) S.session.user.name = v;
-      toast('已保存');
-      closeSheet(); render();
-    }catch(_){ toast('保存失败'); }
+    const btn=t.closest('#btnSaveName');
+    saveLocalName(v);
+    if(S.session && S.session.user) S.session.user.name = v;
+    if(btn){ btn.disabled=true; btn.textContent='保存中…'; }
+    // 先落本机（立即生效），再同步云端并刷新本人名下线索的归属名。
+    // 云端失败不回滚本机——离线也得能改名，但要如实告诉用户同步状态。
+    const uid = currentUid();
+    const okCloud = uid ? await pushNameToCloud(v) : false;
+    if(okCloud) await renameOwnedRecords(v);
+    try{ await refresh(); }catch(_){}
+    closeSheet(); render();
+    toast(!uid ? '用户名已保存'
+      : okCloud ? '用户名已保存，已同步到云端'
+      : '已保存到本机（云端暂时没连上，下次登录会自动补传）', 2800);
     return;
   }
 
@@ -4226,6 +4308,8 @@ async function bootSession(){
   S.session=s;
   SESSION_IS_ADMIN = null;
   await syncAdminFlag();
+  // 先对齐用户名再刷新：首屏显示的就是云端/本机里最新的那个名字
+  await syncNameFromCloud();
   await refresh();
   // 登录完成后从云端恢复「已查看」记录（不阻塞界面，失败静默）
   syncSeenFromCloud();
@@ -4242,7 +4326,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.12';
+const APP_VERSION = '1.4.13';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);

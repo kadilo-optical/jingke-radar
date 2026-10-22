@@ -1,6 +1,6 @@
 {
-  "version": "1.4.12",
-  "note": "修复点击更新无法下载/下到旧包：安装包改从国内镜像下载（带版本号文件名，避免缓存成旧版本），镜像失败自动给出备用地址；不再默认跳 GitHub",
+  "version": "1.4.13",
+  "note": "修复修改用户名像没保存：用户名改为本机+云端双存，换设备/网页版与APP之间同步一致；保存时同步刷新你名下线索的「录入人 / 归属人」显示；保存结果会明确提示是否已同步到云端",
   "apkUrl": "https://glasses-radar.app.workbuddy.host/jingke-radar.apk?sharecode=ABA2SVUO5X",
   "releasedAt": "2026-10-22"
 }
