@@ -1,6 +1,6 @@
 {
-  "version": "1.4.13",
-  "note": "修复修改用户名像没保存：用户名改为本机+云端双存，换设备/网页版与APP之间同步一致；保存时同步刷新你名下线索的「录入人 / 归属人」显示；保存结果会明确提示是否已同步到云端",
-  "apkUrl": "https://glasses-radar.app.workbuddy.host/jingke-radar.apk?sharecode=ABA2SVUO5X",
+  "version": "1.4.14",
+  "note": "粘贴识别更准：老板/法人姓名支持「经营者/投资人/股东/店长」等 19 种标签与「杨银华（老板）」倒装写法，不再把「杨银华电话」粘成 4 个字；地址支持「企业地址/住所/经营场所」等标签、单行粘贴不再吞掉后面一长串、无标签也能从整行或门牌片段里抓，并自动补齐省/市/区四级",
+  "apkUrl": "https://glasses-radar.app.workbuddy.host/jingke-radar-1.4.14.apk?sharecode=ABA2SVUO5X",
   "releasedAt": "2026-10-22"
 }

@@ -3139,10 +3139,52 @@ function leadForm(l={}, prefillArea=''){
 
 /* 从一段粘贴文本里抽字段：公司名/联系人/电话/地址/平台/体量线索
    纯前端规则匹配，识别不出的字段留空，交给人工补 —— 不猜、不编。 */
+// —— 粘贴识别用：字段标签词表（长的在前，避免「地址」抢掉「注册地址」）——
+const LEAD_FIELD_WORDS = [
+  '注册地址','经营地址','办公地址','公司地址','企业地址','企业住所','门店地址','仓库地址','联系地址','通讯地址',
+  '公司全称','公司名称','企业名称','单位名称','经营场所','办公场所','主要经营','经营范围','经营品类','经营项目','主营业务',
+  '法定代表人','法人代表','企业法人','法人','负责人','经营者','投资人','股东','执行董事','总经理','经理','店长','店主','老板',
+  '联系人电话','联系电话','联系方式','联系人','手机号码','手机号','手机','电话号码','电话','固话','座机','微信号','微信','邮箱',
+  '店铺名称','店铺','店名','品牌','昵称','年销售额','年销','营业额','年产值','注册资本','成立日期','成立时间',
+  '员工人数','参保人数','员工','团队','累计评价','评价','粉丝','SKU','需求','备注','来源','主营',
+  '地址','住所','所在地','注册地','平台','渠道','姓名','规模','邮编'
+].sort((a,b)=>b.length-a.length);
+
+// 把一段粘贴文本按字段标签切成 { word, value }，value 到下一个标签为止
+function leadFieldSlices(text){
+  const esc = (s)=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const re = new RegExp('(?:'+LEAD_FIELD_WORDS.map(esc).join('|')+')\\s*[:：]?\\s*','gi');
+  const hits = []; let m;
+  while((m = re.exec(text))){
+    hits.push({ word: m[0].replace(/\s*[:：]?\s*$/,''), start: m.index, end: re.lastIndex });
+    if(re.lastIndex === m.index) re.lastIndex++;
+  }
+  return hits.map((h,i)=>({ word: h.word, value: text.slice(h.end, i+1<hits.length ? hits[i+1].start : text.length).trim() }));
+}
+
+// 从「值」里抠出人名：去职务注记、去粘连的后续字段词、取前 2~4 个汉字
+function cleanLeadName(v){
+  let s = String(v||'').replace(/[\s\u00a0]+/g,' ').trim();
+  if(!s) return '';
+  // 值里常跟着"任职3家企业""TA有2家公司"这类尾巴，或直接粘了下个字段
+  s = s.replace(/[（(【\[].*$/,'');
+  s = s.replace(/(电话|手机|联系|地址|主营|经营|平台|渠道|微信|邮箱|备注|来源|需求|注册|成立|员工|参保|评定|信用|任职|TA|ta).*$/,'').trim();
+  s = s.split(/[\s·|/、,，。;；:：]+/)[0] || '';
+  const m = s.match(/^[\u4e00-\u9fa5]{2,4}/);
+  if(!m) return '';
+  const name = m[0];
+  if(/^(电话|手机|联系|地址|主营|经营|公司|企业|平台|注册|成立|员工|备注|来源|需求|微信|邮箱|姓名|法人|老板|负责)$/.test(name)) return '';
+  return name;
+}
+
 function parseLeadText(raw){
   const t = String(raw||'').replace(/\u00a0/g,' ').replace(/[ \t]+/g,' ').trim();
   const out = {};
   if(!t) return out;
+
+  // 先把文本按字段标签切成片段，后续按标签取值，避免"地址"吞掉后面一长串
+  const slices = leadFieldSlices(t);
+  const pick = (names)=>{ for(const s of slices) if(names.indexOf(s.word)>=0 && s.value) return s.value; return ''; };
 
   // 1) 电话：手机优先，其次固话（0xxx-xxxxxxx）
   const mobiles = [...new Set(t.match(/1[3-9]\d{9}/g) || [])];
@@ -3157,20 +3199,59 @@ function parseLeadText(raw){
   if(compKo) out.company = compKo[0].trim();
   else if(compOther) out.company = compOther[0].trim();
 
-  // 3) 联系人：抓标签后面的 2~4 个汉字
-  const bossM = t.match(/(?:联系人|法定代表人|法人代表|法人|负责人|老板|总经理|经理|店主)\s*[:：]?\s*([\u4e00-\u9fa5]{2,4})/);
-  if(bossM && !/^(电话|手机|先生|女士|公司)$/.test(bossM[1])) out.boss_name = bossM[1];
+  // 3) 联系人 / 老板姓名：标签取值 → 倒装写法 → 首行人名 三级兜底
+  const NAME_LABELS = ['联系人','姓名','法定代表人','法人代表','企业法人','法人','负责人','经营者','投资人','股东','执行董事','总经理','经理','店长','店主','老板'];
+  let boss = cleanLeadName(pick(NAME_LABELS));
+  if(!boss){
+    // 「杨银华（法人）」「杨银华 老板」「杨银华-负责人」这类倒装
+    const post = t.match(/([\u4e00-\u9fa5]{2,4})\s*[（(【\[]?\s*(?:法定代表人|法人代表|法人|负责人|老板|总经理|经理|联系人|经营者|店主|店长)/);
+    if(post) boss = cleanLeadName(post[1]);
+  }
+  if(!boss){
+    // 微信名片/短文本：第一行就是人名
+    const firstLine = (t.split(/\n/).map(x=>x.trim()).filter(Boolean)[0] || '');
+    if(/^[\u4e00-\u9fa5]{2,4}$/.test(firstLine)) boss = firstLine;
+  }
+  if(boss) out.boss_name = boss;
 
-  // 4) 店铺/品牌昵称：显式标签，或英文品牌名
-  const shopM = t.match(/(?:店铺|店名|品牌|昵称|店铺名称)\s*[:：]?\s*([^\s，,。;；]{2,24})/);
-  if(shopM) out.shop_name = shopM[1].trim();
+  // 4) 店铺/品牌昵称：显式标签，或从「××眼镜」里兜底取（商贸城档口常只有店名没有公司名）
+  const shopVal = pick(['店铺名称','店铺','店名','品牌','昵称']);
+  if(shopVal) out.shop_name = shopVal.split(/[\s，,。;；|]+/)[0].slice(0,24);
+  if(!out.shop_name && !out.company){
+    const shopM2 = t.match(/([\u4e00-\u9fa5]{2,6}(?:眼镜|光学|镜业))/);
+    if(shopM2) out.shop_name = shopM2[1];
+  }
 
-  // 5) 地址：标签优先，否则抓含行政区划/道路门牌的片段
-  const addrM = t.match(/(?:注册地址|经营地址|公司地址|所在地|地址)\s*[:：]?\s*([^\n;；]{6,80})/);
-  let addr = addrM ? addrM[1].trim() : '';
+  // 5) 地址：标签取值（已按字段边界截断）→ 行内清洗 → 无标签兜底
+  const ADDR_LABELS = ['注册地址','经营地址','办公地址','公司地址','企业地址','企业住所','门店地址','仓库地址','联系地址','通讯地址','经营场所','办公场所','住所','所在地','注册地','地址'];
+  let addr = pick(ADDR_LABELS);
+  if(addr){
+    // 地址一般写在一行里；「地址：」换行写法时 trim 后第一行就是地址
+    const lines = addr.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+    addr = lines[0] || '';
+    // 单行粘贴时，地址后面可能直接粘着别的字段（没有冒号也无标签边界）
+    addr = addr.replace(/(主营|经营范围|经营品类|经营项目|主营业务|平台|渠道|年销|营业额|年产值|注册资本|成立|员工|参保|联系人|法人|老板|负责人|电话|手机|微信|邮箱|邮编|需求|备注|来源).*$/,'');
+    addr = addr.replace(/[（(][^)）]{0,20}[)）]/g,' ').replace(/^[\s:：,，、;；|]+|[\s,，、;；|]+$/g,'');
+    if(Array.from(addr).length > 60) addr = Array.from(addr).slice(0,60).join('');
+  }
   if(!addr){
-    const guess = t.match(/(?:浙江省?|义乌市?)[^\n;；]{0,12}(?:街道|镇|路|街|小区|电商园|园区|大厦|栋|幢|室|号)[^\n;；]{0,40}/);
-    if(guess) addr = guess[0].trim();
+    // 无「地址」标签：优先找"整行都像地址"的行（微信名片、招聘帖常见这种写法）
+    const cutTail = (s)=>s
+      .replace(/(主营|经营范围|经营品类|经营项目|主营业务|平台|渠道|年销|营业额|注册资本|成立|员工|参保|联系人|法人|老板|负责人|电话|手机|微信|邮箱|邮编|需求|备注|来源).*$/,'')
+      .replace(/[（(][^)）]{0,20}[)）]/g,' ')
+      .replace(/^[\s:：,，、;；|]+|[\s,，、;；|]+$/g,'')
+      .trim();
+    const BAD_LINE = /老板|联系人|电话|手机|平台|主营|年销|法定代表|法人|负责人|注册资本|经营范围|股东|员工|参保/;
+    const lines = t.split(/\n/).map(x=>x.trim()).filter(Boolean);
+    const lineHit = lines.find(x=>!BAD_LINE.test(x)
+      && /街道|镇|路|街|村|小区|园区|电商园|大厦|广场|市场|商城|栋|幢|单元|室|号/.test(x)
+      && Array.from(x).length>=6 && Array.from(x).length<=50);
+    if(lineHit) addr = cutTail(lineHit);
+  }
+  if(!addr){
+    // 最后兜底：抓「市/区/县 + …+ 门牌/园区」的连续片段（从最左开始，取第一段）
+    const m = t.match(/(?:[\u4e00-\u9fa5]{2,8}(?:省|自治区))?[\u4e00-\u9fa5]{2,10}(?:市|区|县)[\u4e00-\u9fa5A-Za-z0-9#\-（）()]{1,40}(?:号|室|楼|栋|幢|单元|园区|电商园|大厦|广场|市场|商城|村)/);
+    if(m) addr = m[0].trim();
   }
   if(addr) out.area = addr.replace(/^[\s:：]+|[\s。;；]+$/g,'');
 
@@ -3221,11 +3302,24 @@ function applyParsedLead(p){
   const area=$('#f_area');
   if(area && p.area){
     let addr = p.area;
-    // 地址里没带市/县时，四级下拉认不出来；这时从公司名或原文里找一个「××市」补在前面
-    if(!/[市县区旗]/.test(addr)){
-      const src = (p.company||'') + ' ' + (p.source||'');
-      const m = src.match(/([\u4e00-\u9fa5]{2,4}市)/);
-      if(m) addr = m[1] + addr;
+    // 地址里没带省/市时，四级下拉认不出来；这时从公司名或原文里找一个「××市」补在前面
+    // 注意别用「含区字」判断——「商贸城三区」「东区」这类不是行政区
+    const hasCity = /省|自治区/.test(addr) || /[\u4e00-\u9fa5]{2,4}市/.test(addr);
+    if(!hasCity){
+      const src2 = (p.company||'') + ' ' + (p.source||'');
+      let cityName = '';
+      const m = src2.match(/([\u4e00-\u9fa5]{2,4}市)/);
+      if(m) cityName = m[1];
+      else {
+        // 原文只写了「义乌」「东阳」没带"市"字（商贸城档口常见）
+        try{
+          const { countyToCity } = geoLookup();
+          cityName = [...countyToCity.keys()]
+            .filter(n=>n.length>=2 && src2.includes(bareName(n)))
+            .sort((a,b)=>b.length-a.length)[0] || '';
+        }catch(_){}
+      }
+      if(cityName) addr = cityName + addr;
     }
     area.value = addr;
     // 四级联动监听的是 change（捕获阶段），两个事件都补发一次最稳
@@ -3233,7 +3327,10 @@ function applyParsedLead(p){
     area.dispatchEvent(new Event('change', {bubbles:true}));
   }
   const got = [p.company&&'公司',p.boss_name&&'联系人',(p.phone||p.phone_alt)&&'电话',p.area&&'地址',p.platforms&&'平台',p.revenue_evidence&&'体量'].filter(Boolean);
-  toast(got.length ? '已识别：'+got.join('、') : '没识别出字段，请手动填写', 2600);
+  const miss = [!p.boss_name&&'联系人',!p.area&&'地址'].filter(Boolean);
+  let msg = got.length ? '已识别：'+got.join('、') : '没识别出字段，请手动填写';
+  if(got.length && miss.length) msg += '；未识别：'+miss.join('、');
+  toast(msg, got.length && miss.length ? 3200 : 2600);
 }
 
 function collectForm(){
@@ -4326,7 +4423,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.13';
+const APP_VERSION = '1.4.14';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);
