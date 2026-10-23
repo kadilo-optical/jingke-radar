@@ -2614,6 +2614,30 @@ function unmarkSeen(id){
   }catch(_){}
 }
 
+/* 搜索归一化：小写 + 全角转半角 + 去掉空白/常见分隔符，
+   让「三友 眼镜」「SAN YOU」「0579-85557735」这类输入都能命中 */
+function normSearch(s){
+  return String(s||'').toLowerCase()
+    .replace(/[\uFF01-\uFF5E]/g, c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/[\s\u3000·・，,。.、\-—_／/|｜（()）]/g,'');
+}
+/* 把查询拆成多个词，且每段都归一化；单字段拼成 haystack 后做「AND 包含」 */
+function searchTerms(raw){
+  return String(raw||'').trim().toLowerCase().split(/[\s\u3000]+/)
+    .map(t=>normSearch(t)).filter(Boolean);
+}
+function leadHaystack(l){
+  return normSearch([
+    l.company,l.shop_name,l.boss_name,l.phone,l.phone_alt,l.area,
+    l.platforms,l.demand_signal,l.revenue_evidence,l.note,l.source,l.status
+  ].filter(Boolean).join(' '));
+}
+function leadMatchTerms(l, terms){
+  if(!terms.length) return true;
+  const hay = leadHaystack(l);
+  return terms.every(t=>hay.includes(t));
+}
+
 function filteredLeads(){
   // 已转入「我的客户」的不再出现在线索库（只留在待跟进-我的客户里）
   let arr = S.leads.filter(l=>l.is_customer !== true);
@@ -2621,13 +2645,16 @@ function filteredLeads(){
     if(GRADES.includes(S.filter)) arr = arr.filter(l=>l.grade===S.filter);
     else arr = arr.filter(l=>l.status===S.filter);
   }
-  const q = S.q.trim().toLowerCase();
-  if(q){
-    arr = arr.filter(l=>[
-      l.company,l.shop_name,l.boss_name,l.phone,l.area,l.platforms,l.demand_signal
-    ].filter(Boolean).some(v=>String(v).toLowerCase().includes(q)));
-  }
+  const terms = searchTerms(S.q);
+  if(terms.length) arr = arr.filter(l=>leadMatchTerms(l, terms));
   return arr;
+}
+
+/* 搜索时顺带把「已转入我的客户」的公司也找出来提示，避免以为线索丢了 */
+function customerHits(){
+  const terms = searchTerms(S.q);
+  if(!terms.length) return [];
+  return S.leads.filter(l=>l.is_customer===true && leadMatchTerms(l, terms));
 }
 
 function leadsView(){
@@ -2667,7 +2694,19 @@ function leadsView(){
     </button>
   </div>
   ${S.selMode?batchBarHtml(arr):''}
-  ${leadsListHtml(arr)}`;
+  <div id="leadsArea">${leadsListHtml(arr)}${customerHitsHtml()}</div>`;
+}
+
+/* 搜索命中「已转我的客户」的提示条：点击直接进详情 */
+function customerHitsHtml(){
+  const hits = customerHits();
+  if(!hits.length) return '';
+  return `
+  <div style="margin:4px 16px 16px;padding:10px 12px;background:#FFF8F0;border:1px solid var(--line);
+    border-radius:12px;font-size:12.5px;color:var(--ink2);line-height:1.6">
+    💡 有 ${hits.length} 家已转入<b style="color:var(--brand-dk)">我的客户</b>（线索库不重复展示）：
+    ${hits.map(l=>`<button class="chip" data-open-lead="${l.id}" style="margin:3px 4px 0 0">${esc(l.company||l.shop_name||('id '+l.id))} ›</button>`).join('')}
+  </div>`;
 }
 
 /* 批量管理操作条：全选 / 批量删除 / 取消 */
@@ -2687,9 +2726,12 @@ function batchBarHtml(arr){
   </div>`;
 }
 
-/* 列表分两段：未查看（正常显示） + 已查看（可折叠，默认收起，记住上次选择） */
+/* 列表分两段：未查看（正常显示） + 已查看（可折叠，默认收起，记住上次选择）
+   搜索状态下不分段：所有命中平铺展示，避免命中项藏在折叠区里被当成「搜不到」 */
 function leadsListHtml(arr){
   if(arr.length===0) return `<div class="list">${emptyView()}</div>`;
+
+  if(S.q.trim()) return `<div class="list">${arr.map(cardView).join('')}</div>`;
 
   const seen = seenSet();
   const fresh = arr.filter(l=>!seen.has(String(l.id)));
@@ -2728,7 +2770,7 @@ function emptyView(){
   return `<div class="empty">
     <div class="big">◎</div>
     <p><b>${filtered?'没有匹配的线索':'线索库还是空的'}</b></p>
-    <p>${filtered?'换个关键词或筛选条件试试':'点右下角「+」把跑到的商家录进来'}</p>
+    <p>${filtered?'换个关键词试试；多个词用空格隔开也能搜':'点右下角「+」把跑到的商家录进来'}</p>
   </div>`;
 }
 
@@ -3507,6 +3549,14 @@ document.addEventListener('click', async (e)=>{
   if(fb){ S.filter=fb.dataset.f; render(); return; }
 
   if(t.closest('#clr')){ S.q=''; render(); return; }
+
+  // 搜索提示条里的「已转我的客户」chip → 直接打开该客户详情
+  const hitChip=t.closest('[data-open-lead]');
+  if(hitChip){
+    const lead=S.leads.find(l=>String(l.id)===hitChip.dataset.openLead);
+    if(lead) openDetail(lead);
+    return;
+  }
 
   // 提醒弹窗：知道了 / 稍后
   if(t.closest('#btnRemindOk')){ closeSheet(); return; }
@@ -4371,15 +4421,12 @@ function scoreChecksViewFrom(checks){
       <span class="t"><b>${esc(c.n)}</b>：${esc(c.d)}</span></div>`).join('')}</div>`;
 }
 
-// search input
+// search input：整体重渲列表区（含折叠区/客户命中提示），保持输入框焦点不动
 document.addEventListener('input',(e)=>{
   if(e.target.id==='q'){
     S.q=e.target.value;
-    const list=document.querySelector('.list');
-    if(list){
-      const arr=filteredLeads();
-      list.innerHTML = arr.length?arr.map(cardView).join(''):emptyView();
-    }
+    const area=document.querySelector('#leadsArea');
+    if(area) area.innerHTML = leadsListHtml(filteredLeads()) + customerHitsHtml();
   }
 });
 
@@ -4427,7 +4474,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.15';
+const APP_VERSION = '1.4.16';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);

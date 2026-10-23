@@ -1,6 +1,6 @@
 {
-  "version": "1.4.15",
-  "note": "粘贴识别加固（含 1.4.14 全部改进）：老板/法人支持经营者、投资人、股东、店长等 19 种标签与「杨银华（老板）」倒装写法；地址支持企业地址、住所、经营场所等标签，单行粘贴不再吞掉后面一长串，没有标签也能从整行或门牌片段抓出，并自动补齐省/市/区四级（补市逻辑下沉到识别层，任何入口调用都拿到完整地址）",
-  "apkUrl": "https://glasses-radar.app.workbuddy.host/jingke-radar-1.4.15.apk?sharecode=ABA2SVUO5X",
-  "releasedAt": "2026-10-22"
+  "version": "1.4.16",
+  "note": "线索库搜索修复：多个词用空格隔开也能搜（AND 匹配）、全角半角/带连字符电话均可命中、搜索范围扩大到备注/来源/经营证据；已转入「我的客户」的公司搜索时会提示并可直达；搜索结果不再藏在「已查看」折叠区里",
+  "apkUrl": "https://glasses-radar.app.workbuddy.host/jingke-radar-1.4.16.apk?sharecode=ABA2SVUO5X",
+  "releasedAt": "2026-10-23"
 }
