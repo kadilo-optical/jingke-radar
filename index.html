@@ -2672,8 +2672,10 @@ function leadsView(){
   <div class="searchwrap">
     <div class="search">
       <span style="opacity:.5">⌕</span>
-      <input id="q" placeholder="搜公司 / 老板 / 电话 / 地址" value="${esc(S.q)}">
+      <input id="q" type="search" enterkeyhint="search" placeholder="搜公司 / 老板 / 电话 / 地址" value="${esc(S.q)}">
       ${S.q?'<span id="clr" style="opacity:.5;font-size:16px;padding:0 2px">✕</span>':''}
+      <button id="btnSearch" style="flex:0 0 auto;border:none;background:var(--brand);color:#fff;border-radius:8px;
+        padding:6px 14px;font-size:13px;font-weight:600">搜索</button>
     </div>
   </div>
   <button id="btnAddrSearch" style="display:flex;align-items:center;gap:10px;width:calc(100% - 32px);margin:0 16px 10px;
@@ -3550,6 +3552,9 @@ document.addEventListener('click', async (e)=>{
 
   if(t.closest('#clr')){ S.q=''; render(); return; }
 
+  // 搜索按钮：不依赖 input 事件（部分安卓输入法在 WebView 里不触发），直接读输入框的值
+  if(t.closest('#btnSearch')){ runSearch(); return; }
+
   // 搜索提示条里的「已转我的客户」chip → 直接打开该客户详情
   const hitChip=t.closest('[data-open-lead]');
   if(hitChip){
@@ -4421,13 +4426,26 @@ function scoreChecksViewFrom(checks){
       <span class="t"><b>${esc(c.n)}</b>：${esc(c.d)}</span></div>`).join('')}</div>`;
 }
 
-// search input：整体重渲列表区（含折叠区/客户命中提示），保持输入框焦点不动
-document.addEventListener('input',(e)=>{
-  if(e.target.id==='q'){
-    S.q=e.target.value;
-    const area=document.querySelector('#leadsArea');
-    if(area) area.innerHTML = leadsListHtml(filteredLeads()) + customerHitsHtml();
-  }
+// search：打字实时过滤（input/compositionend/change 三通道兜底，部分安卓输入法不触发 input），
+// 另有「搜索」按钮和键盘回车做全量触发，任何情况下都能出结果
+function applySearchLive(){
+  const area=document.querySelector('#leadsArea');
+  if(area) area.innerHTML = leadsListHtml(filteredLeads()) + customerHitsHtml();
+  else render();
+}
+function runSearch(){
+  const inp=document.querySelector('#q');
+  if(inp) S.q=inp.value;               // 按钮触发不依赖 input 事件，直接读输入框
+  render();
+  const inp2=document.querySelector('#q');
+  if(inp2){ inp2.focus(); const L=inp2.value.length; try{ inp2.setSelectionRange(L,L); }catch(_){}}
+}
+document.addEventListener('input',(e)=>{ if(e.target.id==='q'){ S.q=e.target.value; applySearchLive(); } });
+document.addEventListener('compositionend',(e)=>{ if(e.target.id==='q'){ S.q=e.target.value; applySearchLive(); } });
+document.addEventListener('change',(e)=>{ if(e.target.id==='q'){ S.q=e.target.value; applySearchLive(); } });
+document.addEventListener('search',(e)=>{ if(e.target.id==='q') runSearch(); });
+document.addEventListener('keydown',(e)=>{
+  if(e.target.id==='q' && e.key==='Enter'){ e.preventDefault(); runSearch(); }
 });
 
 /* ============================================================
@@ -4474,7 +4492,7 @@ async function bootSession(){
    3) Android 侧的 CapacitorHttp 原生请求不受同源策略约束。
    因此双通道取版本：先查云端 app_version 表（最可靠），
    再退回 CapacitorHttp 抓 version.json；两者都失败才静默放弃。 */
-const APP_VERSION = '1.4.16';
+const APP_VERSION = '1.4.17';
 const SHARECODE = (function(){
   try{
     const u = new URL(location.href);

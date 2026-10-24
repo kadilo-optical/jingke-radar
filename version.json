@@ -1,6 +1,6 @@
 {
-  "version": "1.4.16",
-  "note": "线索库搜索修复：多个词用空格隔开也能搜（AND 匹配）、全角半角/带连字符电话均可命中、搜索范围扩大到备注/来源/经营证据；已转入「我的客户」的公司搜索时会提示并可直达；搜索结果不再藏在「已查看」折叠区里",
-  "apkUrl": "https://glasses-radar.app.workbuddy.host/jingke-radar-1.4.16.apk?sharecode=ABA2SVUO5X",
-  "releasedAt": "2026-10-23"
+  "version": "1.4.17",
+  "note": "搜索再加固：搜索栏新增「搜索」按钮（输入后点它必出结果）、键盘回车也能搜；部分安卓输入法不触发实时过滤的问题已用 composition/change 多通道兜底修复",
+  "apkUrl": "https://glasses-radar.app.workbuddy.host/jingke-radar-1.4.17.apk?sharecode=ABA2SVUO5X",
+  "releasedAt": "2026-10-24"
 }
